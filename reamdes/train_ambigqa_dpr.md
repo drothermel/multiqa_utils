@@ -199,3 +199,53 @@ python generate_dense_embeddings.py \
 ```
 
 Make sure that the final line is that the file was written, sometimes you OOM if you didn't request enough memory and the file exists but wasn't finished writing.
+
+## Test the Retrieval
+
+Now, we're going to run the DPR script with a small modification to prevent hitting the breaking change warned in the TODO:
+```python
++++ b/dense_retriever.py
+@@ -72,13 +72,14 @@ def generate_question_vectors(
+                 batch_tensors = [tensorizer.text_to_tensor(q) for q in batch_questions]
+
+             # TODO: this only works for Wav2vec pipeline but will crash the regular text pipeline
+-            max_vector_len = max(q_t.size(1) for q_t in batch_tensors)
+-            min_vector_len = min(q_t.size(1) for q_t in batch_tensors)
+-
+-            if max_vector_len != min_vector_len:
+-                # TODO: _pad_to_len move to utils
+-                from dpr.models.reader import _pad_to_len
+-                batch_tensors = [_pad_to_len(q.squeeze(0), 0, max_vector_len) for q in batch_tensors]
++            if len(batch_tensors) > 0 and batch_tensors[0].dim() > 1:
++                max_vector_len = max(q_t.size(1) for q_t in batch_tensors)
++                min_vector_len = min(q_t.size(1) for q_t in batch_tensors)
++
++                if max_vector_len != min_vector_len:
++                    # TODO: _pad_to_len move to utils
++                    from dpr.models.reader import _pad_to_len
++                    batch_tensors = [_pad_to_len(q.squeeze(0), 0, max_vector_len) for q in batch_tensors]
+
+             q_ids_batch = torch.stack(batch_tensors, dim=0).cuda()
+             q_seg_batch = torch.zeros_like(q_ids_batch).cuda()
+```
+
+We also need to add our dataset to the dataset configurations (after ensuring its a jsonl not json file):
+```python
++++ b/conf/datasets/retriever_default.yaml
+@@ -33,3 +33,6 @@ curatedtrec_test:
+   _target_: dpr.data.retriever_data.CsvQASrc
+   file: data.retriever.qas.curatedtrec-test
+
++ambigqa_dev:
++  _target_: dpr.data.retriever_data.JsonlQASrc
++  file: "/scratch/ddr8143/multiqa/processed_datasets/bm25.ambigqa_light.dev.h100.jsonl"
+```
+
+Then we can run the following, but it CPU OOMED with 64GB:
+```
+python dense_retriever.py \
+  model_file=/scratch/ddr8143/multiqa/baseline_runs_v0/ambigqa_bm25_100.from_nq.bs_48.ws_4.t_0.s_0/best_checkpoint.8 \
+  qa_dataset=ambigqa_dev \
+  ctx_datatsets=[dpr_wiki] \
+  encoded_ctx_files=[\"/scratch/ddr8143/multiqa/baseline_runs_v0/ambigqa_bm25_100.from_nq.bs_48.ws_4.t_0.s_0/dpr_wiki_encoded/shard_*\"] \
+  out_file=/scratch/ddr8143/multiqa/baseline_runs_v0/ambigqa_bm25_100.from_nq.bs_48.ws_4.t_0.s_0/checkpoint_8.ambigqa_dev.json
