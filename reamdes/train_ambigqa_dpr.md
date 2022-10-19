@@ -189,7 +189,7 @@ Turns out that the training is setup to switch validation metrics mid-training, 
 
 ## Encode Wikipedia w/ best checkpoint
 
-Here we will use `DPR/generate_dense_embeddings.py` to convert the wikipedia indx into dense embeddings.  I chose 250 shards, bs256, with each shard running in slightly less than 30mins on a single GPU (but needing 64GB of memory).
+Here we will use `DPR/generate_dense_embeddings.py` to convert the wikipedia indx into dense embeddings.  I chose 250 shards, bs256, with each shard running in slightly less than 30mins on a single GPU (but needing 64GB of memory).  Note that more shards slows down the next step (evaluation) bc all of them have to be loaded individually before any retrieval can happen.  That being said, it might help with memory? Unclear.
 ```bash
 python generate_dense_embeddings.py \
 	model_file=/scratch/ddr8143/multiqa/baseline_runs_v0/ambigqa_bm25_100.from_nq.bs_48.ws_4.t_0.s_0/best_checkpoint.8 \
