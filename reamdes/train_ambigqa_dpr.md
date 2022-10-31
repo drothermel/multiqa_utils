@@ -2,7 +2,7 @@
 
 ## Setup and Download Data
 First, download necessary resources using the `scripts/download_data.py` script with additional keys (line 391) for ambigqa data:
-```
+```bash
 # Get the version of wikipedia used by NQ DPR training 
 python scripts/download_data.py --resource data.wikipedia_split.psgs_w100
 
@@ -14,7 +14,7 @@ python scripts/download_data.py --resource checkpoint.retriever.single.nq.bert-b
 ```
 
 Then, setup pyserini to do the BM25 retrieval to get the positive and hard negative contexts:
-```
+```bash
 # Following: https://github.com/castorini/pyserini/blob/master/docs/installation.md#development-installation
 conda install -c conda-forge openjdk=11
 conda install -c conda-forge pytorch faiss-cpu
@@ -51,7 +51,7 @@ python -m unittest
 ```
 
 And install DPR:
-```
+```bash
 git clone git@github.com:facebookresearch/DPR.git
 
 # Update setup.py, find packages with:
@@ -65,7 +65,7 @@ pip install -e .
 
 For the DPR repo, if you use transformers<4.0.0 you'll need rust to install tokenizers<0.9.4.  Avoid this by using a new version of transformers, the reqs file for DPR includes transformers>= 4.3.0.  However, then you'll need to make a small update to `dpr/models/biencoder.py` to ignore the `position_ids` field which newer hf BERT models have but that aren't in the checkpoints:
 
-```
+```python
 # Changes made to line 245, load_state()
 # Remove: self.load_state_dict(saved_state.model_dict, strict=strict)
 # Add:
@@ -88,7 +88,7 @@ For the DPR repo, if you use transformers<4.0.0 you'll need rust to install toke
 ```
 
 For the pyserini repo, for AmbigQA, make the following changes to add a query iterator to enable reading the slightly different dataset format:
-```
+```python
 +++ b/pyserini/query_iterator.py
 @@ -30,6 +30,7 @@ from urllib.error import HTTPError, URLError
  class TopicsFormat(Enum):
@@ -141,7 +141,7 @@ We'll do this by querying the wikipedia index using BM25.  The positive contexts
 Creating this dataset happens in two parts: 
 
 (1) Do the query for 100 hits for each element in the dataset
-```
+```bash
 # Repeat for all splits
 SPLIT="dev"; HITS="100";
 python -m pyserini.search.lucene \
@@ -155,7 +155,7 @@ python -m pyserini.search.lucene \
 ```
 
 (2) Postprocess the results into a dataset
-```
+```bash
 SPLIT="dev"; HITS="1000";
 python -m pyserini.eval.convert_multiqa_trec_run_to_dpr_retrieval \
   --index wikipedia-dpr \
@@ -168,7 +168,7 @@ python -m pyserini.eval.convert_multiqa_trec_run_to_dpr_retrieval \
 ## Run training
 
 Its important to use DDP instead of DataParallel if you want in batch negatives to work:
-```
+```bash
 cd DPR/
 
 # Note that modle_file is the checkpoint to initialize from
@@ -183,3 +183,69 @@ BS=48; WS=2; python -m torch.distributed.launch --nproc_per_node=${WS} train_den
   model_file=/scratch/ddr8143/repos/DPR/downloads/checkpoint/retriever/single/nq/bert-base-encoder.cp
 ```
 
+## Identify best checkpoint
+
+Turns out that the training is setup to switch validation metrics mid-training, so the first part of training uses NLL Validation and the second uses Avg Rank.  Unfortuantely this means that the "best checkpoint" updating doesn't quite work.  Look through each of these metrics manually to see what your actual best checkpoint is.
+
+## Encode Wikipedia w/ best checkpoint
+
+Here we will use `DPR/generate_dense_embeddings.py` to convert the wikipedia indx into dense embeddings.  I chose 250 shards, bs256, with each shard running in slightly less than 30mins on a single GPU (but needing 64GB of memory).  Note that more shards slows down the next step (evaluation) bc all of them have to be loaded individually before any retrieval can happen.  That being said, it might help with memory? Unclear.
+```bash
+python generate_dense_embeddings.py \
+	model_file=/scratch/ddr8143/multiqa/baseline_runs_v0/ambigqa_bm25_100.from_nq.bs_48.ws_4.t_0.s_0/best_checkpoint.8 \
+	ctx_src=dpr_wiki \
+	shard_id=0 num_shards=250 batch_size=256 \
+	out_file=/scratch/ddr8143/multiqa/baseline_runs_v0/ambigqa_bm25_100.from_nq.bs_48.ws_4.t_0.s_0/dpr_wiki_encoded/shard
+```
+
+Make sure that the final line is that the file was written, sometimes you OOM if you didn't request enough memory and the file exists but wasn't finished writing.
+
+## Test the Retrieval
+
+Now, we're going to run the DPR script with a small modification to prevent hitting the breaking change warned in the TODO:
+```python
++++ b/dense_retriever.py
+@@ -72,13 +72,14 @@ def generate_question_vectors(
+                 batch_tensors = [tensorizer.text_to_tensor(q) for q in batch_questions]
+
+             # TODO: this only works for Wav2vec pipeline but will crash the regular text pipeline
+-            max_vector_len = max(q_t.size(1) for q_t in batch_tensors)
+-            min_vector_len = min(q_t.size(1) for q_t in batch_tensors)
+-
+-            if max_vector_len != min_vector_len:
+-                # TODO: _pad_to_len move to utils
+-                from dpr.models.reader import _pad_to_len
+-                batch_tensors = [_pad_to_len(q.squeeze(0), 0, max_vector_len) for q in batch_tensors]
++            if len(batch_tensors) > 0 and batch_tensors[0].dim() > 1:
++                max_vector_len = max(q_t.size(1) for q_t in batch_tensors)
++                min_vector_len = min(q_t.size(1) for q_t in batch_tensors)
++
++                if max_vector_len != min_vector_len:
++                    # TODO: _pad_to_len move to utils
++                    from dpr.models.reader import _pad_to_len
++                    batch_tensors = [_pad_to_len(q.squeeze(0), 0, max_vector_len) for q in batch_tensors]
+
+             q_ids_batch = torch.stack(batch_tensors, dim=0).cuda()
+             q_seg_batch = torch.zeros_like(q_ids_batch).cuda()
+```
+
+We also need to add our dataset to the dataset configurations (after ensuring its a jsonl not json file):
+```python
++++ b/conf/datasets/retriever_default.yaml
+@@ -33,3 +33,6 @@ curatedtrec_test:
+   _target_: dpr.data.retriever_data.CsvQASrc
+   file: data.retriever.qas.curatedtrec-test
+
++ambigqa_dev:
++  _target_: dpr.data.retriever_data.JsonlQASrc
++  file: "/scratch/ddr8143/multiqa/processed_datasets/bm25.ambigqa_light.dev.h100.jsonl"
+```
+
+Then we can run the following, but it CPU OOMED with 64GB:
+```
+python dense_retriever.py \
+  model_file=/scratch/ddr8143/multiqa/baseline_runs_v0/ambigqa_bm25_100.from_nq.bs_48.ws_4.t_0.s_0/best_checkpoint.8 \
+  qa_dataset=ambigqa_dev \
+  ctx_datatsets=[dpr_wiki] \
+  encoded_ctx_files=[\"/scratch/ddr8143/multiqa/baseline_runs_v0/ambigqa_bm25_100.from_nq.bs_48.ws_4.t_0.s_0/dpr_wiki_encoded/shard_*\"] \
+  out_file=/scratch/ddr8143/multiqa/baseline_runs_v0/ambigqa_bm25_100.from_nq.bs_48.ws_4.t_0.s_0/checkpoint_8.ambigqa_dev.json
