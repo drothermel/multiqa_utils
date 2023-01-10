@@ -14,36 +14,40 @@ METADATA_KEYS = ["titles_with_text", "all_titles"]  # might not be updated
 
 # After wikiextractor has already processed the wikidump then we can
 # use this to create base files for a page index.
-# 
+#
 # HTML Escaping from: https://medium.com/@jorlugaqui/how-to-strip-html-tags-from-a-string-in-python-7cb81a2bbf44
 # This will:
 #    1) Remove any html tags remaining from the text
 #    2) Append the keywords "Title:" and "Article:" along with the title to the text
 #    3) Format the final output file into a .jsonl in the format expected by pyserini index builder
 def postprocess_wikipedia_segment_to_page_index(infile, outfile, verbose=True):
-    clean = re.compile('<.*?>')
+    clean = re.compile("<.*?>")
 
     postprocess_pages = []
     with jsonlines.open(infile) as reader:
         for obj in reader:
-            if obj['text']:
-                cleaned_text = re.sub(clean, '', html.unescape(obj['text']))
+            if obj["text"]:
+                cleaned_text = re.sub(clean, "", html.unescape(obj["text"]))
                 new_text = f"Title: {obj['title']}\nArticle: {cleaned_text}"
-                postprocess_pages.append({
-                    "id": obj['id'],
-                    "contents": new_text,
-                })
+                postprocess_pages.append(
+                    {
+                        "id": obj["id"],
+                        "contents": new_text,
+                    }
+                )
 
-    with jsonlines.open(outfile, mode='w') as writer:
+    with jsonlines.open(outfile, mode="w") as writer:
         writer.write_all(postprocess_pages)
     if verbose:
         print(f">> Wrote: {outfile}")
-    
+
 
 # Pass in the input wikipath (to the directory that contains AA-GN) and an
 # output directory and this writes pre-index files in the format "ED_wiki_18.jsonl"
 # ready to be used by pyserini to create a full page index.
-def postprocess_wikipedia_to_page_index(input_wikipath, output_dir, verbose=True, force=False):
+def postprocess_wikipedia_to_page_index(
+    input_wikipath, output_dir, verbose=True, force=False
+):
     for alpha_seg in sorted(os.listdir(input_wikipath)):
         wiki_segment = get_wikiseg_path(input_wikipath, alpha_seg)
         for input_path in sorted(glob.glob(f"{wiki_segment}/wiki_[0-9][0-9]")):
@@ -51,11 +55,14 @@ def postprocess_wikipedia_to_page_index(input_wikipath, output_dir, verbose=True
             output_path = f"{output_dir}/{alpha_seg}_{subseg}.jsonl"
             if os.path.exists(output_path) and not force:
                 continue
-            postprocess_wikipedia_segment_to_page_index(input_path, output_path, verbose=verbose)
+            postprocess_wikipedia_segment_to_page_index(
+                input_path, output_path, verbose=verbose
+            )
     print(">> Finished Postprocessing Wikipedia to Page Index")
 
 
 # ==== Utils for extracting metadata from wikipedia segments ==== #
+
 
 def get_wikiseg_path(wikipath, segment):
     return f"{wikipath}/{segment}"
@@ -67,12 +74,12 @@ def get_metadata_path(wikipath, segment):
 
 # Read in the segment, extract all the titles that have text and store them in a
 # metadata.json file in the same segment directory.
-# 
+#
 # Example:
 # wikipath = '/scratch/ddr8143/wikipedia/enwiki_20220701/'
 # for i, segment in enumerate(sorted(os.listdir(wikipath))):
 #    get_segment_metadata(wikipath, segment, force=False)
-# 
+#
 # >> Metadata exists: /scratch/ddr8143/wikipedia/enwiki_20220701/AA/metadata.json
 # ...
 #
@@ -131,6 +138,7 @@ def get_segment_metadata(wikipath, segment, force=False, verbose=False):
         print(
             f">> Wrote metadata for {num_titles:6} titles ({num_wtext:6} with text) to {mdpath}"
         )
+
 
 # Load all of the titles according to the key ("all_titles" or "titles_with_text") from a
 # full wikipedia dump.
