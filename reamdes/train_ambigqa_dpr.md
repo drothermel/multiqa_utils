@@ -249,3 +249,11 @@ python dense_retriever.py \
   ctx_datatsets=[dpr_wiki] \
   encoded_ctx_files=[\"/scratch/ddr8143/multiqa/baseline_runs_v0/ambigqa_bm25_100.from_nq.bs_48.ws_4.t_0.s_0/dpr_wiki_encoded/shard_*\"] \
   out_file=/scratch/ddr8143/multiqa/baseline_runs_v0/ambigqa_bm25_100.from_nq.bs_48.ws_4.t_0.s_0/checkpoint_8.ambigqa_dev.json
+```
+
+And the out file will contain the questions with the retreived contexts, ready for evaluation.
+
+## Evaluate Retrievers
+
+Finally, we can directly use the output of that previous step in `notebooks/eval_retriever.ipynb` to calculate the Recall@k of the model.
+
