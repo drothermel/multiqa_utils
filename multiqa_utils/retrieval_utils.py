@@ -4,6 +4,7 @@ import os
 
 # Standardize Filenames
 
+
 def bm25_out_name(outdir, dataset, split, hits):
     return f"{outdir}/bm25.{dataset}.{split}.h{hits}.json"
 
@@ -38,5 +39,7 @@ def display_no_positive(hits_list, pathname_fxn):
     print(f"---- | ------------------------------")
     for hits in hits_list:
         s = count_no_positive(pathname_fxn(hits), hits)
-        percent_no_pos = s['no_pos_len'] * 100 / s['total_len']
-        print(f"{s['hits']:4} | {s['no_pos_len']}/{s['total_len']} ({percent_no_pos:0.2f}%)")
+        percent_no_pos = s["no_pos_len"] * 100 / s["total_len"]
+        print(
+            f"{s['hits']:4} | {s['no_pos_len']}/{s['total_len']} ({percent_no_pos:0.2f}%)"
+        )

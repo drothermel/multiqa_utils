@@ -22,7 +22,6 @@ def parse_epoch_em_from_dpr_reader_training_logs(filename, n_gpus=4):
                 curr_EM += float(l.split()[-1])
                 i += 1
 
-
             if i == n_gpus:
                 i = 0
                 results[e] = curr_EM / n_gpus
@@ -58,29 +57,32 @@ def parse_lines_from_dpr_retriever_training_logs(filename):
                     useful_lines[k].append(vldata)
     return useful_lines
 
+
 def plot_nll_validation_from_dpr_retriever_useful_lines(useful_lines):
-    y = [float(l.split("loss = ")[-1].split(". ")[0]) for l in useful_lines["nll_validation"]]
+    y = [
+        float(l.split("loss = ")[-1].split(". ")[0])
+        for l in useful_lines["nll_validation"]
+    ]
     x = [i + 1 for i in range(len(y))]
-    
-    fig = plt.figure(figsize=(10,5))
+
+    fig = plt.figure(figsize=(10, 5))
     plt.plot(x, y)
 
     plt.xlabel("Epoch")
-    #plt.ylim([0, 100])
+    # plt.ylim([0, 100])
     plt.xlim([0, 30])
     plt.ylabel("Validation Loss")
     plt.title("AmbigQA Finetuning of NQ DPR Retrieval Model: Validation Loss")
-    #plt.legend()
+    # plt.legend()
     plt.show()
-    
-    
-    
+
+
 # ===== Evaluate Retrieval Performance against GT ====== #
 
 # Check whether any alias of the answer is in the context
 # - takes the context and a list of alias lists (one list per answer)
 # - returns a True/False presence list for (any alias of) all answers
-def answers_in_context(context, answer_llist):    
+def answers_in_context(context, answer_llist):
     ans_in_context = []
     for alist in answer_llist:
         a_in_context = False
@@ -94,34 +96,34 @@ def answers_in_context(context, answer_llist):
 
 # Returns list of the index of the context that contains each answer (or None)
 # Expects retrieval list of the form:
-#    [{"question": ..., 
+#    [{"question": ...,
 #      "contexts": { # (or "ctxs")
 #         ctx_idx: {"text": "..."},
-#      ...}, 
-#     }, 
+#      ...},
+#     },
 #    ...]
 # Expects ground truth: [(question, [answer_aliases, ...]), ...]
-# 
+#
 # Returns list of (question, [answer_inds])
-def get_index_of_context_with_answers(retrieval_list, ground_truth): 
+def get_index_of_context_with_answers(retrieval_list, ground_truth):
     q_not_in_gt = []
     indices_of_answers = []
     for dev_idx in range(len(retrieval_list)):
         retrieved = retrieval_list[dev_idx]
-        if retrieved['question'] not in ground_truth:
-            q_not_in_gt.append(retrieved['question'])
+        if retrieved["question"] not in ground_truth:
+            q_not_in_gt.append(retrieved["question"])
             continue
-        gt_ans = ground_truth[retrieved['question']]
+        gt_ans = ground_truth[retrieved["question"]]
         index_true = [None for _ in range(len(gt_ans))]
         ctx_key = "contexts" if "contexts" in retrieved else "ctxs"
-        for ctx_idx in range(len(retrieved[ctx_key]) ):
-            a_in_c = answers_in_context(retrieved[ctx_key][ctx_idx]['text'], gt_ans)
+        for ctx_idx in range(len(retrieved[ctx_key])):
+            a_in_c = answers_in_context(retrieved[ctx_key][ctx_idx]["text"], gt_ans)
             for a_idx, a in enumerate(a_in_c):
                 if a and index_true[a_idx] is None:
                     index_true[a_idx] = ctx_idx
             if all([it is not None for it in index_true]):
                 break
-        indices_of_answers.append((retrieved['question'], index_true))
+        indices_of_answers.append((retrieved["question"], index_true))
     return indices_of_answers, q_not_in_gt
 
 
