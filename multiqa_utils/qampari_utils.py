@@ -1,10 +1,33 @@
 import random
 import jsonlines
 
+import multiqa_utils.general_utils as gu
+
 DOWNLOADED_DATA_DIR = "/scratch/ddr8143/multiqa/downloads/data/qampari/"
 PROCESSED_DATA_DIR = "/scratch/ddr8143/multiqa/qampari_data/"
 DECOMP_DATA_DIR = f"{PROCESSED_DATA_DIR}decomposition_v0/"
 MANUAL_TRAIN_DECOMPOSITION_PATH = f"{DECOMP_DATA_DIR}/manual_decompositions_train.json"
+
+## =============================================== ##
+## ================ Viz Util ================= ##
+## =============================================== ##
+
+def print_data(data):
+    for k, v in {
+        "Type": data['id'],
+        "Question": data['question'],
+        "Question Keywords": gu.get_question_keyword_str(data['question']),
+        "Answers": gu.get_answer_str(data['answers']),
+        "Len pos contexts": len(data['positive_ctxs']),
+        "Len ctxs": len(data['ctxs']),
+    }.items():
+        print(f"{ k+':':20} {v}")
+
+    gu.print_ctx_list(
+        data['positive_ctxs'],
+        answers=data['answers'],
+        question=data['question'],
+    )
 
 ## =============================================== ##
 ## ================ General Util ================= ##
