@@ -6,7 +6,6 @@ def setup_apikey(file="/scratch/ddr8143/.openai_secretkey.txt"):
     
 
 def prompt_openai(prompt, engine='text-davinci-003', max_tokens=256, logprobs=1, temperature=0.0):
-    response = None
     try:
         response = openai.Completion.create(
             engine=engine,
@@ -17,6 +16,7 @@ def prompt_openai(prompt, engine='text-davinci-003', max_tokens=256, logprobs=1,
             stream=False,
             stop=["<|endoftext|>", "\n\n"]
         )
+        return response, response['choices'][0]['text']
     except Exception as e:
         print(e)
-    return response, response['choices'][0]['text']
+        return None, None
