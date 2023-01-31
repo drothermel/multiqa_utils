@@ -15,18 +15,18 @@ MANUAL_TRAIN_DECOMPOSITION_PATH = f"{DECOMP_DATA_DIR}/manual_decompositions_trai
 def split_dataset_by_question_type(data_list, verbose=True):
     qtype_id_lists = {
         "wikidata_simple": [],
-        "wikidata_comp": [], 
+        "wikidata_comp": [],
         "wikidata_intersection": [],
     }
     for i, qd in enumerate(data_list):
         for qtype in qtype_id_lists.keys():
-            if qtype in qd['qid']:
+            if qtype in qd["qid"]:
                 qtype_id_lists[qtype].append(i)
 
     if verbose:
         for k, v in qtype_id_lists.items():
             print(f"{k + ':':25} {len(v):4}, first 5: {v[:5]}")
-            
+
     return qtype_id_lists
 
 
@@ -36,7 +36,7 @@ def random_sample_n_per_type(qtype_ind_list, n, verbose=True):
         il = [i for i in indlist]
         random.shuffle(il)
         random_sample[k] = il[:n]
-    
+
     if verbose:
         for k, v in random_sample.items():
             print(f"{k + ':':25} {len(v):4}, first 5: {v[:5]}")
@@ -48,7 +48,7 @@ def load_wikidata_dev_data(dpath=f"{DOWNLOADED_DATA_DIR}dev_data.jsonl"):
     with open(dpath) as f:
         qmp_devd_iter = jsonlines.Reader(f)
         for d in qmp_devd_iter:
-            if 'wikitables' in d['qid']:
+            if "wikitables" in d["qid"]:
                 continue
             qmp_dev.append(d)
     return qmp_dev
@@ -59,9 +59,7 @@ def load_wikidata_train_data(dpath=f"{DOWNLOADED_DATA_DIR}train_data.jsonl"):
     with open(dpath) as f:
         qmp_traind_iter = jsonlines.Reader(f)
         for d in qmp_traind_iter:
-            if 'wikitables' in d['qid']:
+            if "wikitables" in d["qid"]:
                 continue
             qmp_train.append(d)
     return qmp_train
-
-    
