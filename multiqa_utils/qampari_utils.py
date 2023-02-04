@@ -43,6 +43,15 @@ def random_sample_n_per_type(qtype_ind_list, n, verbose=True):
     return random_sample
 
 
+def load_dev_data(dpath=f"{DOWNLOADED_DATA_DIR}dev_data.jsonl"):
+    qmp_dev = []
+    with open(dpath) as f:
+        qmp_devd_iter = jsonlines.Reader(f)
+        for d in qmp_devd_iter:
+            qmp_dev.append(d)
+    return qmp_dev
+
+
 def load_wikidata_dev_data(dpath=f"{DOWNLOADED_DATA_DIR}dev_data.jsonl"):
     qmp_dev = []
     with open(dpath) as f:
