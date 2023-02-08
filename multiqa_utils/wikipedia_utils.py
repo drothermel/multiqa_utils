@@ -34,7 +34,7 @@ def process_all_wikipath_subsegs(
     all_outputs = []
     if output_dir is not None and not os.path.exists(output_dir):
         os.mkdir(output_dir)
-        print(">> Creating output dir:", output_dir)
+        print(">> Creating output dir:", output_dir, flush=True)
 
     # alpha_path ~ wikipath/AA
     alpha_files = sorted(glob.glob(f"{input_wikipath}[A-Z][A-Z]"))
@@ -48,7 +48,7 @@ def process_all_wikipath_subsegs(
         alpha = alpha_path.split("/")[-1]
         subseg_files = sorted(glob.glob(f"{alpha_path}/wiki_[0-9][0-9]"))
         if verbose:
-            print("Alpha Seg:", alpha, len(subseg_files))
+            print("Alpha Seg:", alpha, len(subseg_files), flush=True)
 
         # subseg_path ~ wikipath/AA/wiki_00
         for subseg_path in subseg_files:
@@ -89,14 +89,14 @@ def get_initial_str2wikipage_cache(
     ## All true titles should map to themselves
     # Assume if the cache exists it already has the title set in it (unless force)
     if not os.path.exists(path_args.cache_path) or force:
-        print(">> Adding true titles to cache")
+        print(">> Adding true titles to cache", flush=True)
         cache = {}
         for t in tqdm(gt_wikititle_set, disable=(not use_tqdm)):
             cache[t] = [t]
     else:
-        print(">> Loading the cache")
+        print(">> Loading the cache", flush=True)
         cache = json.load(open(path_args.cache_path))
-    print(">> Initial cache size:", len(cache))
+    print(">> Initial cache size:", len(cache), flush=True)
     return cache
 
 
@@ -194,8 +194,14 @@ def build_str2wikipage_cache(
 
     ## Then, for all new strings, if not in cache, do wikipedia seach + validate that the result is in GT
     added_strings = set()
-    print(">> Adding new strings to cache:", len(strs_to_add))
-    for s in tqdm(strs_to_add, disable=(not use_tqdm)):
+    processed = -1
+    print(">> About to add new strings to cache:", len(strs_to_add), flush=True)
+    print(">> No tqdm this time", flush=True)
+    #for s in tqdm(strs_to_add, disable=(not use_tqdm)):
+    for s in strs_to_add:
+        processed += 1
+        print(">>   processing:", processed, flush=True)
+        
         s_norm = gu.normalize(s)
         if s_norm in cache or s_norm.strip() == "" or s.strip() == "":
             continue
@@ -220,15 +226,15 @@ def build_str2wikipage_cache(
             and len(added_strings) % write_every == 0
         ):
             print(
-                f">> Dumping intermediate cache after processing {len(added_strings)} words"
+                f">> Dumping intermediate cache after processing {len(added_strings)} words", flush=True
             )
             checkpoint_caches(path_args, cache, disambig_cache, added_strings, suffix)
 
-    print(">> Final cache size:", len(cache))
+    print(">> Final cache size:", len(cache), flush=True)
     if len(added_strings) > 0:
         checkpoint_caches(path_args, cache, disambig_cache, added_strings, suffix)
     else:
-        print(">> No changes, cache at:", cache_path)
+        print(">> No changes, cache at:", cache_path, flush=True)
 
 
 ###################################
@@ -295,7 +301,7 @@ def wikipedia_title_to_links_tagmes_strs(
         force=force,
         start=start,
     )
-    print(">> Finished processing all segments.")
+    print(">> Finished processing all segments.", flush=True)
     return all_paths
 
 
@@ -336,9 +342,10 @@ def build_gt_wikititle_set(
         print(
             ">> Dumped unique list of all gt wiki titles to:",
             path_args.gt_title_set_path,
+            flush=True,
         )
     else:
-        print(">> Index already exists:", path_args.gt_title_set_path)
+        print(">> Index already exists:", path_args.gt_title_set_path, flush=True)
         all_titles = json.load(open(path_args.gt_title_set_path))
     return all_titles
 
@@ -377,7 +384,7 @@ def postprocess_wikipedia_segment_to_page_index(infile, outfile, verbose=True):
     with jsonlines.open(outfile, mode="w") as writer:
         writer.write_all(postprocess_pages)
     if verbose:
-        print(f">> Wrote: {outfile}")
+        print(f">> Wrote: {outfile}", flush=True)
 
 
 # Pass in the input wikipath (to the directory that contains AA-GN) and an
@@ -428,7 +435,7 @@ def get_segment_metadata(wikipath, segment, force=False, verbose=False):
     mdpath = get_metadata_path(wikipath, segment)
     if not force and os.path.exists(mdpath):
         if verbose:
-            print(f">> Metadata exists: {mdpath}")
+            print(f">> Metadata exists: {mdpath}", flush=True)
         return
 
     wiki_segment = get_wikiseg_path(wikipath, segment)
@@ -455,7 +462,7 @@ def get_segment_metadata(wikipath, segment, force=False, verbose=False):
                             {k: v for k, v in ldata.items() if k != "has_text"}
                         )
                 except:
-                    print("Exception!!!")
+                    print("Exception!!!", flush=True)
                     print(l)
 
     # Validate results
@@ -475,7 +482,7 @@ def get_segment_metadata(wikipath, segment, force=False, verbose=False):
         num_titles = len(seg_title_to_info)
         num_wtext = len(seg_title_to_info_wtext)
         print(
-            f">> Wrote metadata for {num_titles:6} titles ({num_wtext:6} with text) to {mdpath}"
+            f">> Wrote metadata for {num_titles:6} titles ({num_wtext:6} with text) to {mdpath}", flush=True
         )
 
 

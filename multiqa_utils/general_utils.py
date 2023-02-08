@@ -17,7 +17,7 @@ def current_default_path_args():
         "gt_wiki_dir": "/scratch/ddr8143/wikipedia/tagme_dumps_qampari_wikipedia/",
         "gt_wiki_postp_dir": "/scratch/ddr8143/wikipedia/tagme_dumps_qampari_wikipedia/postprocessed/",
         # Paths for setting up ent_str to wiki_page cache
-        "gt_title_set_path": "/scratch/ddr8143/wikipedia/tagme_dumps_qampari_wikipedia/postprocessed/wikiversion_title_set.json",
+        "gt_title_set_path": "/scratch/ddr8143/wikipedia/tagme_dumps_qampari_wikipedia/postprocessed/gt_title_set.json",
         "wikitags_path_regexp": "/scratch/ddr8143/wikipedia/tagme_dumps_qampari_wikipedia/postprocessed/title2linktagmestrs_*.json",
         "strs_for_cache_path": "/scratch/ddr8143/wikipedia/tagme_dumps_qampari_wikipedia/postprocessed/strs_to_add_to_cache_v0.json",
         "cache_path": "/scratch/ddr8143/wikipedia/tagme_dumps_qampari_wikipedia/postprocessed/str2wikipage_cache.json",
@@ -62,4 +62,4 @@ def checkpoint_json(
         if os.path.exists(cp_base):
             shutil.move(cp_base, cp_backup)
     json.dump(data, open(cp_base, "w+"))
-    print(">> Dumped:", cp_base)
+    print(">> Dumped:", cp_base, flush=True)
