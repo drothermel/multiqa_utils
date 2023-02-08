@@ -69,6 +69,34 @@ def process_all_wikipath_subsegs(
 ##    Entity Strings to Pages    ##
 ###################################
 
+def checkpoint_caches(path_args, cache, disambig_cache, added_strings, suffix):
+    new_cache = {k: cache[k] for k in added_strings}
+    gu.checkpoint_json(data=new_cache, path=path_args.cache_path, suffix=suffix)
+    gu.checkpoint_json(
+        data=disambig_cache, path=path_args.disambig_cache_path, suffix=suffix,
+    )
+    
+
+def get_initial_str2wikipage_cache(
+    gt_wikititle_set,
+    path_args,
+    use_tqdm=False,
+    force=False,
+):
+    ## All true titles should map to themselves
+    # Assume if the cache exists it already has the title set in it (unless force)
+    if not os.path.exists(path_args.cache_path) or force:
+        print(">> Adding true titles to cache")
+        cache = {}
+        for t in tqdm(gt_wikititle_set, disable=(not use_tqdm)):
+            cache[t] = [t]
+    else:
+        print(">> Loading the cache")
+        cache = json.load(open(path_args.cache_path))
+    print(">> Initial cache size:", len(cache))
+    return cache
+
+
 def string_to_wikipages(ent_str, disambig_cache={}, wikipage_cache=None, max_level=2, force_contains=True):
     # Return from cache if exists
     norm_e = gu.normalize(ent_str)
@@ -137,89 +165,56 @@ def wikipage_disambig_contains(ent_str, options, max_level=2, force_contains=Tru
         level += 1
     return possible_answers, disambig_cache
 
-def checkpoint_caches(cache, disambig_cache, cache_path, disambig_cache_path):
-    cache_backup_path = cache_path + "__old"
-    disambig_cache_backup_path = disambig_cache_path + "__old"
-    if os.path.exists(cache_path):
-        shutil.move(cache_path, cache_backup_path)
-    if os.path.exists(disambig_cache_path):
-        shutil.move(disambig_cache_path, disambig_cache_backup_path)
-    json.dump(cache, open(cache_path, 'w+'))
-    json.dump(disambig_cache, open(disambig_cache_path, 'w+'))
-    print(">> Dumped cache to:", cache_path)
-    print(">> Dumped disambig_cache to:", disambig_cache_path)
-
 
 # Note, all elements are normalized in the cache
 def build_str2wikipage_cache(
+    path_args,
     strs_to_add=[],
-    disambig_cache_path='/scratch/ddr8143/wikipedia/tagme_dumps_qampari_wikipedia/postprocessed/str2wikipage_disambig_cache.json',
-    cache_path='/scratch/ddr8143/wikipedia/tagme_dumps_qampari_wikipedia/postprocessed/str2wikipage_cache.json',
-    wikiversion_title_set_path='/scratch/ddr8143/wikipedia/tagme_dumps_qampari_wikipedia/postprocessed/wikiversion_title_set.json',
     force=False,
     use_tqdm=False,
     write_every=None,
+    suffix='',
 ):
-    cache = {}
-    if os.path.exists(disambig_cache_path):
-        disambig_cache = json.load(open(disambig_cache_path))
-    else:
-        disambig_cache = {}
+    gt_wikititle_set = build_gt_wikititle_set(path_args, force=False)
+    cache = get_initial_str2wikipage_cache(
+        gt_wikititle_set,
+        path_args,
+        use_tqdm=use_tqdm,
+        force=force,
+    )    
+    dc_exists = os.path.exists(path_args.disambig_cache_path)
+    disambig_cache = json.load(open(path_args.disambig_cache_path)) if dc_exists else {}
     
-    ## All true titles should map to themselves
-    wikiversion_title_set = set(json.load(open(wikiversion_title_set_path)))
-    # Assume if the cache exists it already has the title set in it (unless force)
-    if not os.path.exists(cache_path) or force:
-        print(">> Adding true titles to cache")
-        for t in tqdm(wikiversion_title_set, disable=(not use_tqdm)):
-            cache[t] = [t]
-    else:
-        print(">> Loading the cache")
-        cache = json.load(open(cache_path))
-    print(">> Initial cache size:", len(cache))
-    added_something = False
-        
+    
     ## Then, for all new strings, if not in cache, do wikipedia seach + validate that the result is in GT
+    added_strings = set()
     print(">> Adding new strings to cache:", len(strs_to_add))
-    num_s = -1
     for s in tqdm(strs_to_add, disable=(not use_tqdm)):
         s_norm = gu.normalize(s)
-        if s_norm in cache:
+        if s_norm in cache or s_norm.strip() == '' or s.strip() == '':
             continue
         
-        num_s += 1
-        s_unnorm = gu.unnormalize(s_norm)
-        if s_unnorm.strip() == '':
-            print(f"Empty String: |{s}|{s_norm}|{s_unnorm}")
-            continue
-        
-        s_pages = []
         possible_pages, disambig_cache = string_to_wikipages(
-            s_unnorm, 
+            gu.unnormalize(s_norm), 
             disambig_cache=disambig_cache, 
             wikipage_cache=cache,
+            force_contains=True,
         )
-
-        for pp in possible_pages:
-            norm_pp = gu.normalize(pp)
-            if norm_pp in wikiversion_title_set:
-                s_pages.append(norm_pp)
-                
+        norm_pps = [gu.normalize(pp) for pp in possible_pages]
+        s_pages = [npp for npp in norm_pps if npp in gt_wikititle_set]                
         if len(s_pages) == 0:
-            # TODO: fuzzy wuzzy
-            # print("Whoops, no real pages for string:", s)
             continue
-            
-        if write_every is not None and num_s != 0 and num_s % write_every == 0:
-            print(f">> Dumping intermediate cache after processing {num_s} words")
-            checkpoint_caches(cache, disambig_cache, cache_path, disambig_cache_path)
         
         cache[s_norm] = s_pages
-        added_something = True
+        added_strings.add(s_norm)
+            
+        if write_every is not None and len(added_strings) > 0 and len(added_strings) % write_every == 0:
+            print(f">> Dumping intermediate cache after processing {len(added_strings)} words")
+            checkpoint_caches(path_args, cache, disambig_cache, added_strings, suffix)
     
     print(">> Final cache size:", len(cache))
-    if added_something:
-        checkpoint_caches(cache, disambig_cache, cache_path, disambig_cache_path)
+    if len(added_strings) > 0:
+        checkpoint_caches(path_args, cache, disambig_cache, added_strings, suffix)
     else:
         print(">> No changes, cache at:", cache_path)
 
@@ -247,7 +242,7 @@ def write_title_to_links_tagmes_subseg(
 ):
     subseg_ind = {}
     
-    wiki_pages = gu.readjsonl(input_path)
+    wiki_pages = gu.loadjsonl(input_path)
     for wiki_page in wiki_pages:
         if len(wiki_page['clean_text']) == 0:
             continue
@@ -273,17 +268,16 @@ def write_title_to_links_tagmes_subseg(
 
 
 def wikipedia_title_to_links_tagmes_strs(
-    input_wikipath,
-    output_dir,
-    output_name,
+    path_args,
+    output_name='title2linktagmestrs',
     verbose=False,
     force=False,
     start=None,
 ):
     all_paths = process_all_wikipath_subsegs(
-        input_wikipath=input_wikipath,
+        input_wikipath=path_args.gt_wiki_dir,
         fxn=write_title_to_links_tagmes_subseg,
-        output_dir=output_dir,
+        output_dir=path_args.gt_wiki_postp_dir,
         output_name=output_name,
         verbose=verbose,
         force=force,
@@ -298,7 +292,7 @@ def get_title_set_subseg(
     verbose=False,
 ):
     title_set = set()
-    wikipages = gu.readjsonl(input_path)
+    wikipages = gu.loadjsonl(input_path)
     for wiki_page in wikipages:
         if len(wiki_page['clean_text']) != 0:
             title_set.add(gu.normalize(wiki_page['title']))
@@ -318,6 +312,19 @@ def wikipedia_title_set(
         all_titles.update(s)
     return all_titles
 
+
+def build_gt_wikititle_set(
+    path_args,
+    force=False,
+):
+    if not os.path.exists(path_args.gt_title_set_path) or force:
+        all_titles = wikipedia_title_set(path_args.gt_wiki_dir, verbose=True)
+        json.dump(list(all_titles), open(path_args.gt_title_set_path, 'w+'))
+        print(">> Dumped unique list of all gt wiki titles to:", path_args.gt_title_set_path)
+    else:
+        print(">> Index already exists:", path_args.gt_title_set_path)
+        all_titles = json.load(open(path_args.gt_title_set_path))
+    return all_titles
 
 
 ###################################

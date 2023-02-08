@@ -82,13 +82,16 @@ def wikipedia_tagsfilelist_to_unique_norm_ent(wiki_tags_file_list, use_tqdm=Fals
 ###################################
 
 def aggregate_strs_to_add_to_cache(
-    gpt_ans_path="/scratch/ddr8143/multiqa/qampari_data/qmp_simple_gpt3_answers_structured.json",
-    elq_ans_path="/scratch/ddr8143/multiqa/qampari_data/eql_default_tagging_v0_qmp_dev.jsonl",
-    processed_wikitags_path_regexp="/scratch/ddr8143/wikipedia/tagme_dumps_qampari_wikipedia/postprocessed/title2linktagmestrs_*.json",
-    output_path="/scratch/ddr8143/wikipedia/tagme_dumps_qampari_wikipedia/postprocessed/strs_to_add_to_cache_v0.json",
+    path_args,
+    add_elq=False,
+    add_gpt=False,
+    add_wikitags=False,
     use_tqdm=False,
     curr_cache=None
 ):
+    output_path = path_args.strs_for_cache_path
+    assert output_path is not None
+    
     all_strs = set('')
     if os.path.exists(output_path):
         print(">> Load existing string list:", output_path)
@@ -96,24 +99,24 @@ def aggregate_strs_to_add_to_cache(
         print(">> Initial string list length:", len(all_strs))
         
     # Add elq
-    if elq_ans_path is not None and os.path.exists(elq_ans_path):
+    if add_elq and os.path.exists(path_args.elq_ans_path):
         print(">> Adding ELQ ents")
-        elq_ans_list = gu.readjsonl(elq_ans_path)
+        elq_ans_list = gu.loadjsonl(path_args.elq_ans_path)
         elq_ent_set = elq_anslist_to_unique_norm_ent(elq_ans_list)
         all_strs.update(elq_ent_set)
         print(">> After Adding ELQ:", len(all_strs))
     
     # Add GPT3
-    if gpt_ans_path is not None and os.path.exists(gpt_ans_path):
+    if add_gpt and os.path.exists(path_args.gpt_ans_path):
         print(">> Adding GPT3 ents")
-        gpt_ans_list = json.load(open(gpt_ans_path))
+        gpt_ans_list = json.load(open(path_args.gpt_ans_path))
         gpt_ent_set = gpt_structuredlist_to_norm_ent(gpt_ans_list)
         all_strs.update(gpt_ent_set)
         print(">> After Adding GPT3:", len(all_strs))
     
     # Add tagme and links
-    if processed_wikitags_path_regexp is not None:
-        files = glob.glob(processed_wikitags_path_regexp)
+    if add_wikitags:
+        files = glob.glob(path_args.processed_wikitags_path_regexp)
         if len(files) is not None:
             print(">> Adding Wikipedia Tags and Links")
             wt_strs = wikipedia_tagsfilelist_to_unique_norm_ent(files, use_tqdm=use_tqdm)
