@@ -8,6 +8,7 @@ import glob
 import multiqa_utils.general_utils as gu
 import multiqa_utils.wikipedia_utils as wu
 
+
 def split_list_to_jobs(
     job_id,
     total_num_jobs,
@@ -16,8 +17,10 @@ def split_list_to_jobs(
     total_elem = len(full_list)
     num_strs_each = math.ceil(total_elem / total_num_jobs)
     start_id = num_strs_each * job_id
-    end_id = num_strs_each * (job_id+1)
-    print(f">> This job gets from {start_id} to {end_id} of full list length {total_elem} bc its job {job_id} of {total_num_jobs}")
+    end_id = num_strs_each * (job_id + 1)
+    print(
+        f">> This job gets from {start_id} to {end_id} of full list length {total_elem} bc its job {job_id} of {total_num_jobs}"
+    )
     return full_list[start_id:end_id]
 
 
@@ -31,14 +34,14 @@ def distributed_build_str2wikipage_cache(
     write_every=None,
 ):
     # First setup this job specifically
-    strs_to_add = split_list_to_jobs(job_id, total_num_jobs, all_strs_to_add)    
+    strs_to_add = split_list_to_jobs(job_id, total_num_jobs, all_strs_to_add)
     wu.build_str2wikipage_cache(
         path_args,
         strs_to_add=strs_to_add,
         force=force,
         use_tqdm=use_tqdm,
         write_every=write_every,
-        suffix=f"__job{job_id}"
+        suffix=f"__job{job_id}",
     )
 
 
@@ -50,7 +53,7 @@ def aggregate_checkpoint_dicts(
     if len(all_files) < 2:
         print(f">> Only one file, skipping aggregation")
         return
-    
+
     print(f">> Aggregating all {len(all_files)} versions of:", base_path)
     full_dict = {}
     for f in all_files:
@@ -65,4 +68,3 @@ def aggregate_checkpoint_dicts(
         for f in to_remove:
             os.remove(f)
         print(">> Intermediate files have been removed")
-    

@@ -9,9 +9,10 @@ import multiqa_utils.general_utils as gu
 ##         Input Parsing         ##
 ###################################
 
+
 def gpt_out_to_info(gout):
-    ans_lines = gout['output'].split('\n')
-    gpt_info = {'qid': gout['qid']}
+    ans_lines = gout["output"].split("\n")
+    gpt_info = {"qid": gout["qid"]}
     for l in ans_lines:
         sl = l.split(": ")
         a_key = gu.normalize(sl[0])
@@ -35,14 +36,16 @@ def convert_gpt_raw_to_structured(raw_path, structured_path, force=False):
         return
     gpt_ans_raw = json.load(open(raw_path))
     gpt_ans = [gpt_out_to_info(ga) for ga in gpt_ans_raw]
-    json.dump(gpt_ans, open(structured_path, 'w+'))
+    json.dump(gpt_ans, open(structured_path, "w+"))
     print(">> Dumped structured answers to:", structured_path)
+
 
 def gpt_structured_to_norm_ent(gpt):
     all_ents = set()
-    all_ents.update([gu.normalize(p) for p in gpt['pages']])
-    all_ents.update([gu.normalize(a) for a in gpt['sampled_answers']])
+    all_ents.update([gu.normalize(p) for p in gpt["pages"]])
+    all_ents.update([gu.normalize(a) for a in gpt["sampled_answers"]])
     return all_ents
+
 
 def gpt_structuredlist_to_norm_ent(gpt_list):
     all_ents = set()
@@ -50,8 +53,10 @@ def gpt_structuredlist_to_norm_ent(gpt_list):
         all_ents.update(gpt_structured_to_norm_ent(gpt))
     return all_ents
 
+
 def elq_ans_to_unique_norm_ent(elq_ans):
-    return set([gu.normalize(e[0]) for e in elq_ans['pred_tuples_string']])
+    return set([gu.normalize(e[0]) for e in elq_ans["pred_tuples_string"]])
+
 
 def elq_anslist_to_unique_norm_ent(elq_ans_list):
     unique_elq_str = set()
@@ -60,13 +65,18 @@ def elq_anslist_to_unique_norm_ent(elq_ans_list):
         unique_elq_str.update(ea_unique_set)
     return unique_elq_str
 
+
 def wikipedia_tags_to_unique_norm_ent(wiki_tags):
     all_ent_strs = set()
-    all_ent_strs.update([gu.normalize(s, unquote=True) for s in wiki_tags['links'] if '://' not in s])
-    all_ent_strs.update([gu.normalize(s) for s in wiki_tags['tagmes'] if '://' not in s])
+    all_ent_strs.update(
+        [gu.normalize(s, unquote=True) for s in wiki_tags["links"] if "://" not in s]
+    )
+    all_ent_strs.update(
+        [gu.normalize(s) for s in wiki_tags["tagmes"] if "://" not in s]
+    )
     return all_ent_strs
-    
-    
+
+
 def wikipedia_tagsfilelist_to_unique_norm_ent(wiki_tags_file_list, use_tqdm=False):
     all_ents = set()
     for f in tqdm.tqdm(wiki_tags_file_list, disable=(not use_tqdm)):
@@ -81,23 +91,24 @@ def wikipedia_tagsfilelist_to_unique_norm_ent(wiki_tags_file_list, use_tqdm=Fals
 ##        Pipeline Pieces        ##
 ###################################
 
+
 def aggregate_strs_to_add_to_cache(
     path_args,
     add_elq=False,
     add_gpt=False,
     add_wikitags=False,
     use_tqdm=False,
-    curr_cache=None
+    curr_cache=None,
 ):
     output_path = path_args.strs_for_cache_path
     assert output_path is not None
-    
-    all_strs = set('')
+
+    all_strs = set("")
     if os.path.exists(output_path):
         print(">> Load existing string list:", output_path)
         all_strs = set(json.load(open(output_path)))
         print(">> Initial string list length:", len(all_strs))
-        
+
     # Add elq
     if add_elq and os.path.exists(path_args.elq_ans_path):
         print(">> Adding ELQ ents")
@@ -105,7 +116,7 @@ def aggregate_strs_to_add_to_cache(
         elq_ent_set = elq_anslist_to_unique_norm_ent(elq_ans_list)
         all_strs.update(elq_ent_set)
         print(">> After Adding ELQ:", len(all_strs))
-    
+
     # Add GPT3
     if add_gpt and os.path.exists(path_args.gpt_ans_path):
         print(">> Adding GPT3 ents")
@@ -113,24 +124,26 @@ def aggregate_strs_to_add_to_cache(
         gpt_ent_set = gpt_structuredlist_to_norm_ent(gpt_ans_list)
         all_strs.update(gpt_ent_set)
         print(">> After Adding GPT3:", len(all_strs))
-    
+
     # Add tagme and links
     if add_wikitags:
         files = glob.glob(path_args.processed_wikitags_path_regexp)
         if len(files) is not None:
             print(">> Adding Wikipedia Tags and Links")
-            wt_strs = wikipedia_tagsfilelist_to_unique_norm_ent(files, use_tqdm=use_tqdm)
+            wt_strs = wikipedia_tagsfilelist_to_unique_norm_ent(
+                files, use_tqdm=use_tqdm
+            )
             all_strs.update(wt_strs)
             print(">> After Adding Wikipedia Tags and Links:", len(all_strs))
-            
+
     if curr_cache is not None:
         print(">> Removing strings already in cache")
         all_strs = all_strs - curr_cache.keys()
         print(">> New string list length:", len(all_strs))
-    
+
     if output_path is not None:
         print(">> Writing file")
-        json.dump(list(all_strs - set([''])), open(output_path, 'w+'))
+        json.dump(list(all_strs - set([""])), open(output_path, "w+"))
         print(">> Dumped to:", output_path)
     else:
         return all_strs
@@ -140,8 +153,10 @@ def aggregate_strs_to_add_to_cache(
 ##         BM25 Retrieval        ##
 ###################################
 
+
 def bm25_out_name(outdir, dataset, split, hits):
     return f"{outdir}/bm25.{dataset}.{split}.h{hits}.json"
+
 
 # This counts the number of questions in a dataset has no positive included
 # (with the assumption that the positive contexts have been produced by some retrieval)

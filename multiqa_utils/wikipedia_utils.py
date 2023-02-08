@@ -17,10 +17,10 @@ import wikipedia
 import multiqa_utils.general_utils as gu
 
 
-
 ###################################
 ##         Global Utils          ##
 ###################################
+
 
 def process_all_wikipath_subsegs(
     input_wikipath,
@@ -29,15 +29,15 @@ def process_all_wikipath_subsegs(
     output_name=None,
     verbose=False,
     force=False,
-    start=None
+    start=None,
 ):
     all_outputs = []
     if output_dir is not None and not os.path.exists(output_dir):
         os.mkdir(output_dir)
         print(">> Creating output dir:", output_dir)
-    
+
     # alpha_path ~ wikipath/AA
-    alpha_files = sorted(glob.glob(f'{input_wikipath}[A-Z][A-Z]'))
+    alpha_files = sorted(glob.glob(f"{input_wikipath}[A-Z][A-Z]"))
     start_i = 0
     if start is not None:
         for i, af in enumerate(alpha_files):
@@ -45,16 +45,16 @@ def process_all_wikipath_subsegs(
                 start_i = i
                 break
     for alpha_path in alpha_files[start_i:]:
-        alpha = alpha_path.split('/')[-1]
-        subseg_files = sorted(glob.glob(f'{alpha_path}/wiki_[0-9][0-9]'))
+        alpha = alpha_path.split("/")[-1]
+        subseg_files = sorted(glob.glob(f"{alpha_path}/wiki_[0-9][0-9]"))
         if verbose:
             print("Alpha Seg:", alpha, len(subseg_files))
-    
+
         # subseg_path ~ wikipath/AA/wiki_00
         for subseg_path in subseg_files:
-            subseg = subseg_path.split('/')[-1]
+            subseg = subseg_path.split("/")[-1]
             if output_dir is not None:
-                on = output_name + '_' if output_name is not None else ''
+                on = output_name + "_" if output_name is not None else ""
                 out_path = f"{output_dir}{on}{alpha}_{subseg}"
                 if os.path.exists(out_path) and not force:
                     continue
@@ -69,13 +69,16 @@ def process_all_wikipath_subsegs(
 ##    Entity Strings to Pages    ##
 ###################################
 
+
 def checkpoint_caches(path_args, cache, disambig_cache, added_strings, suffix):
     new_cache = {k: cache[k] for k in added_strings}
     gu.checkpoint_json(data=new_cache, path=path_args.cache_path, suffix=suffix)
     gu.checkpoint_json(
-        data=disambig_cache, path=path_args.disambig_cache_path, suffix=suffix,
+        data=disambig_cache,
+        path=path_args.disambig_cache_path,
+        suffix=suffix,
     )
-    
+
 
 def get_initial_str2wikipage_cache(
     gt_wikititle_set,
@@ -97,12 +100,14 @@ def get_initial_str2wikipage_cache(
     return cache
 
 
-def string_to_wikipages(ent_str, disambig_cache={}, wikipage_cache=None, max_level=2, force_contains=True):
+def string_to_wikipages(
+    ent_str, disambig_cache={}, wikipage_cache=None, max_level=2, force_contains=True
+):
     # Return from cache if exists
     norm_e = gu.normalize(ent_str)
     if wikipage_cache is not None and norm_e in wikipage_cache:
         return wikipage_cache[norm_e]
-    
+
     # Otherwise, use wikipedia api to search
     try:
         answers = wikipedia.search(ent_str)
@@ -110,7 +115,7 @@ def string_to_wikipages(ent_str, disambig_cache={}, wikipage_cache=None, max_lev
         return [gu.normalize(wikipedia.page(first_answer).title)], disambig_cache
     except wikipedia.DisambiguationError as e:
         poss_ans_set, disambig_cache = wikipage_disambig_contains(
-            ent_str, 
+            ent_str,
             e.options,
             max_level=max_level,
             force_contains=force_contains,
@@ -121,25 +126,27 @@ def string_to_wikipages(ent_str, disambig_cache={}, wikipage_cache=None, max_lev
         return [], disambig_cache
 
 
-def wikipage_disambig_contains(ent_str, options, max_level=2, force_contains=True, disambig_cache={}):
+def wikipage_disambig_contains(
+    ent_str, options, max_level=2, force_contains=True, disambig_cache={}
+):
     norm_e = gu.normalize(ent_str)
     checked = set()
     possible_answers = set()
-    
+
     level = 0
     next_to_check = []
     if force_contains:
         to_check = [o for o in options if norm_e in gu.normalize(o)]
     else:
         to_check = [o for o in options]
-        
+
     while len(to_check) > 0 and level < max_level:
         for tc in to_check:
             if tc in checked:
                 continue
             checked.add(tc)
-            
-            # Setup for next level of bfs            
+
+            # Setup for next level of bfs
             # Cache disambig since queries take forever
             if tc in disambig_cache:
                 for o in disambig_cache[tc]:
@@ -173,7 +180,7 @@ def build_str2wikipage_cache(
     force=False,
     use_tqdm=False,
     write_every=None,
-    suffix='',
+    suffix="",
 ):
     gt_wikititle_set = build_gt_wikititle_set(path_args, force=False)
     cache = get_initial_str2wikipage_cache(
@@ -181,37 +188,42 @@ def build_str2wikipage_cache(
         path_args,
         use_tqdm=use_tqdm,
         force=force,
-    )    
+    )
     dc_exists = os.path.exists(path_args.disambig_cache_path)
     disambig_cache = json.load(open(path_args.disambig_cache_path)) if dc_exists else {}
-    
-    
+
     ## Then, for all new strings, if not in cache, do wikipedia seach + validate that the result is in GT
     added_strings = set()
     print(">> Adding new strings to cache:", len(strs_to_add))
     for s in tqdm(strs_to_add, disable=(not use_tqdm)):
         s_norm = gu.normalize(s)
-        if s_norm in cache or s_norm.strip() == '' or s.strip() == '':
+        if s_norm in cache or s_norm.strip() == "" or s.strip() == "":
             continue
-        
+
         possible_pages, disambig_cache = string_to_wikipages(
-            gu.unnormalize(s_norm), 
-            disambig_cache=disambig_cache, 
+            gu.unnormalize(s_norm),
+            disambig_cache=disambig_cache,
             wikipage_cache=cache,
             force_contains=True,
         )
         norm_pps = [gu.normalize(pp) for pp in possible_pages]
-        s_pages = [npp for npp in norm_pps if npp in gt_wikititle_set]                
+        s_pages = [npp for npp in norm_pps if npp in gt_wikititle_set]
         if len(s_pages) == 0:
             continue
-        
+
         cache[s_norm] = s_pages
         added_strings.add(s_norm)
-            
-        if write_every is not None and len(added_strings) > 0 and len(added_strings) % write_every == 0:
-            print(f">> Dumping intermediate cache after processing {len(added_strings)} words")
+
+        if (
+            write_every is not None
+            and len(added_strings) > 0
+            and len(added_strings) % write_every == 0
+        ):
+            print(
+                f">> Dumping intermediate cache after processing {len(added_strings)} words"
+            )
             checkpoint_caches(path_args, cache, disambig_cache, added_strings, suffix)
-    
+
     print(">> Final cache size:", len(cache))
     if len(added_strings) > 0:
         checkpoint_caches(path_args, cache, disambig_cache, added_strings, suffix)
@@ -222,12 +234,12 @@ def build_str2wikipage_cache(
 ###################################
 ##       Entity Extraction       ##
 ###################################
-    
+
 
 def extract_page_set_from_extracted_links(wikipedia_link_list):
     wk_pages = set()
     for wl in wikipedia_link_list:
-        wk_pages.add(gu.normalize(wl['linked_et'], unquote=True))
+        wk_pages.add(gu.normalize(wl["linked_et"], unquote=True))
     return wk_pages
 
 
@@ -241,21 +253,21 @@ def write_title_to_links_tagmes_subseg(
     verbose=False,
 ):
     subseg_ind = {}
-    
+
     wiki_pages = gu.loadjsonl(input_path)
     for wiki_page in wiki_pages:
-        if len(wiki_page['clean_text']) == 0:
+        if len(wiki_page["clean_text"]) == 0:
             continue
 
-        title = gu.normalize(wiki_page['title'])
-        links = extract_page_set_from_extracted_links(wiki_page['links'])
-        tagmes = extract_entity_set_from_tagme_list(wiki_page['tagme_links'])
+        title = gu.normalize(wiki_page["title"])
+        links = extract_page_set_from_extracted_links(wiki_page["links"])
+        tagmes = extract_entity_set_from_tagme_list(wiki_page["tagme_links"])
         if title in subseg_ind:
-            links.update(subseg_ind[title]['links'])
-            tagmes.update(subseg_ind[title]['tagmes'])
-            subseg_ind[title]['data_paths'].append(input_path)
-            subseg_ind[title]['links'] = list(links)
-            subseg_ind[title]['tagmes'] = list(tagmes)
+            links.update(subseg_ind[title]["links"])
+            tagmes.update(subseg_ind[title]["tagmes"])
+            subseg_ind[title]["data_paths"].append(input_path)
+            subseg_ind[title]["links"] = list(links)
+            subseg_ind[title]["tagmes"] = list(tagmes)
         else:
             subseg_ind[title] = {
                 "data_paths": [input_path],
@@ -264,12 +276,12 @@ def write_title_to_links_tagmes_subseg(
                 "tagmes": list(tagmes),
             }
     output_path_full = f"{output_path}.json"
-    json.dump(subseg_ind, open(output_path_full, 'w+'))
+    json.dump(subseg_ind, open(output_path_full, "w+"))
 
 
 def wikipedia_title_to_links_tagmes_strs(
     path_args,
-    output_name='title2linktagmestrs',
+    output_name="title2linktagmestrs",
     verbose=False,
     force=False,
     start=None,
@@ -285,8 +297,8 @@ def wikipedia_title_to_links_tagmes_strs(
     )
     print(">> Finished processing all segments.")
     return all_paths
-    
-    
+
+
 def get_title_set_subseg(
     input_path,
     verbose=False,
@@ -294,9 +306,10 @@ def get_title_set_subseg(
     title_set = set()
     wikipages = gu.loadjsonl(input_path)
     for wiki_page in wikipages:
-        if len(wiki_page['clean_text']) != 0:
-            title_set.add(gu.normalize(wiki_page['title']))
+        if len(wiki_page["clean_text"]) != 0:
+            title_set.add(gu.normalize(wiki_page["title"]))
     return title_set
+
 
 def wikipedia_title_set(
     input_wikipath,
@@ -319,8 +332,11 @@ def build_gt_wikititle_set(
 ):
     if not os.path.exists(path_args.gt_title_set_path) or force:
         all_titles = wikipedia_title_set(path_args.gt_wiki_dir, verbose=True)
-        json.dump(list(all_titles), open(path_args.gt_title_set_path, 'w+'))
-        print(">> Dumped unique list of all gt wiki titles to:", path_args.gt_title_set_path)
+        json.dump(list(all_titles), open(path_args.gt_title_set_path, "w+"))
+        print(
+            ">> Dumped unique list of all gt wiki titles to:",
+            path_args.gt_title_set_path,
+        )
     else:
         print(">> Index already exists:", path_args.gt_title_set_path)
         all_titles = json.load(open(path_args.gt_title_set_path))
@@ -370,7 +386,10 @@ def postprocess_wikipedia_segment_to_page_index(infile, outfile, verbose=True):
 #
 # TODO: Test if you use this again, slight refactor
 def postprocess_wikipedia_to_page_index(
-    input_wikipath, output_dir, force=False, verbose=False,
+    input_wikipath,
+    output_dir,
+    force=False,
+    verbose=False,
 ):
     process_all_wikipath_subsegs(
         input_wikipath=input_wikipath,
