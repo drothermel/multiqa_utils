@@ -4,11 +4,13 @@ import jsonlines
 import urllib
 import unicodedata
 import shutil
+import argparse
 
 
 def current_default_path_args():
     path_config = {
         # Input Data from previous steps
+        "gpt_ans_raw_path": "/scratch/ddr8143/multiqa/qampari_data/qmp_simple_gpt3_answers.json",
         "gpt_ans_path": "/scratch/ddr8143/multiqa/qampari_data/qmp_simple_gpt3_answers_structured.json",
         "elq_ans_path": "/scratch/ddr8143/multiqa/qampari_data/eql_default_tagging_v0_qmp_dev.jsonl",
         # Key Directories
