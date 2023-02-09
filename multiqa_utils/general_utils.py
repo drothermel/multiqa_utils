@@ -8,112 +8,10 @@ import argparse
 import textwrap
 import re
 
-WORDS_TO_IGNORE = set(
-    [
-        "a",
-        "about",
-        "all",
-        "also",
-        "and",
-        "as",
-        "at",
-        "be",
-        "because",
-        "but",
-        "by",
-        "can",
-        "come",
-        "could",
-        "day",
-        "do",
-        "even",
-        "find",
-        "first",
-        "for",
-        "from",
-        "get",
-        "give",
-        "go",
-        "have",
-        "he",
-        "her",
-        "here",
-        "him",
-        "his",
-        "how",
-        "I",
-        "if",
-        "in",
-        "into",
-        "it",
-        "its",
-        "is",
-        "just",
-        "know",
-        "like",
-        "look",
-        "make",
-        "man",
-        "many",
-        "me",
-        "more",
-        "my",
-        "new",
-        "no",
-        "not",
-        "now",
-        "of",
-        "on",
-        "one",
-        "only",
-        "or",
-        "other",
-        "our",
-        "out",
-        "people",
-        "say",
-        "see",
-        "she",
-        "so",
-        "some",
-        "take",
-        "tell",
-        "than",
-        "that",
-        "the",
-        "their",
-        "them",
-        "then",
-        "there",
-        "these",
-        "they",
-        "thing",
-        "think",
-        "this",
-        "those",
-        "time",
-        "to",
-        "two",
-        "up",
-        "use",
-        "very",
-        "was",
-        "want",
-        "way",
-        "we",
-        "well",
-        "what",
-        "when",
-        "which",
-        "who",
-        "will",
-        "with",
-        "would",
-        "year",
-        "you",
-        "your",
-    ]
+WORDS_TO_IGNORE_PATH = (
+    "/scratch/ddr8143/repos/multiqa_utils/data_files/words_to_ignore.json"
 )
+WORDS_TO_IGNORE = None
 
 GREEN_START = "\x1b[32m"
 RED_START = "\x1b[31m"
@@ -183,8 +81,14 @@ def checkpoint_json(
 ################################################
 
 
+def load_words_to_ignore():
+    if WORDS_TO_IGNORE is None:
+        WORDS_TO_IGNORE = set(json.load(open(WORDS_TO_IGNORE_PATH)))
+
+
 def parse_question_to_words(question):
     qbase = question.strip("?")
+    load_words_to_ignore()
     qwords = [w for w in qbase.split() if w not in WORDS_TO_IGNORE]
     return qwords
 
