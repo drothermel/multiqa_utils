@@ -31,8 +31,8 @@ def current_default_path_args():
         "gt_title_set_path": "/scratch/ddr8143/wikipedia/tagme_dumps_qampari_wikipedia/postprocessed/gt_title_set.json",
         "no_text_pages": "/scratch/ddr8143/wikipedia/tagme_dumps_qampari_wikipedia/postprocessed/no_text_pages.json",
         "wikitags_path_regexp": "/scratch/ddr8143/wikipedia/tagme_dumps_qampari_wikipedia/postprocessed/title2linktagmestrs_*.json",
-        #After running: remove_unneeded_lookup_strings, moved to v1
-        #"strs_for_cache_path": "/scratch/ddr8143/wikipedia/tagme_dumps_qampari_wikipedia/postprocessed/strs_to_add_to_cache_v0.json",
+        # After running: remove_unneeded_lookup_strings, moved to v1
+        # "strs_for_cache_path": "/scratch/ddr8143/wikipedia/tagme_dumps_qampari_wikipedia/postprocessed/strs_to_add_to_cache_v0.json",
         "strs_for_cache_path": "/scratch/ddr8143/wikipedia/tagme_dumps_qampari_wikipedia/postprocessed/strs_to_add_to_cache_v1.json",
         "cache_path": "/scratch/ddr8143/wikipedia/tagme_dumps_qampari_wikipedia/postprocessed/str2wikipage_cache.json",
         "disambig_cache_path": "/scratch/ddr8143/wikipedia/tagme_dumps_qampari_wikipedia/postprocessed/str2wikipage_disambig_cache.json",

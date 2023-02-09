@@ -102,7 +102,7 @@ def get_initial_str2wikipage_cache(
 
 def string_to_wikipages(
     ent_str, disambig_cache={}, wikipage_cache=None, max_level=2, force_contains=True
-):    
+):
     # Return from cache if exists
     norm_e = gu.normalize(ent_str)
     if wikipage_cache is not None and norm_e in wikipage_cache:
@@ -153,7 +153,11 @@ def wikipage_disambig_contains(
                 print("        *** But in disambig cache", flush=True)
                 for o in disambig_cache[tc]:
                     norm_o = gu.normalize(o)
-                    contains_check = (norm_e in norm_o or norm_o in norm_e) if force_contains else True
+                    contains_check = (
+                        (norm_e in norm_o or norm_o in norm_e)
+                        if force_contains
+                        else True
+                    )
                     if o not in checked and contains_check:
                         next_to_check.append(o)
             else:
@@ -164,7 +168,11 @@ def wikipage_disambig_contains(
                     disambig_cache[tc] = e.options
                     for o in e.options:
                         norm_o = gu.normalize(o)
-                        contains_check = (norm_e in norm_o or norm_o in norm_e) if force_contains else True
+                        contains_check = (
+                            (norm_e in norm_o or norm_o in norm_e)
+                            if force_contains
+                            else True
+                        )
                         if o not in checked and contains_check:
                             next_to_check.append(o)
                 except:
@@ -198,7 +206,7 @@ def build_str2wikipage_cache(
         )
     else:
         cache = curr_cache
-    
+
     dc_exists = os.path.exists(path_args.disambig_cache_path)
     disambig_cache = json.load(open(path_args.disambig_cache_path)) if dc_exists else {}
 
@@ -207,23 +215,34 @@ def build_str2wikipage_cache(
     processed = -1
     if verbose:
         print(">> About to add new strings to cache:", len(strs_to_add), flush=True)
-    #for s in tqdm(strs_to_add, disable=(not use_tqdm)):
+    # for s in tqdm(strs_to_add, disable=(not use_tqdm)):
     for s in strs_to_add:
         processed += 1
         if verbose:
             print(">>   processing:", processed, flush=True)
 
-        
         s_norm = gu.normalize(s)
         s_unnorm = gu.unnormalize(s_norm)
         if verbose:
             print("\n-------- Process String ---------------", flush=True)
-            print("string:", s, "| string_norm:", s_norm, "| string unnorm:", s_unnorm, flush=True)
+            print(
+                "string:",
+                s,
+                "| string_norm:",
+                s_norm,
+                "| string unnorm:",
+                s_unnorm,
+                flush=True,
+            )
         if s_norm in cache or s_norm.strip() == "" or s.strip() == "":
             if verbose:
                 print("   Continue because:", flush=True)
                 print("           s_norm in cache?", s_norm in cache, flush=True)
-                print("           empty string?", s_norm.strip() == "" or s.strip() == "", flush=True)
+                print(
+                    "           empty string?",
+                    s_norm.strip() == "" or s.strip() == "",
+                    flush=True,
+                )
             continue
 
         possible_pages, disambig_cache = string_to_wikipages(
@@ -245,11 +264,11 @@ def build_str2wikipage_cache(
             cache[s_norm] = s_pages
         else:
             if verbose:
-                print('', flush=True)
+                print("", flush=True)
                 print("    -----------------------------------", flush=True)
                 print("    >>>>>> WOULD ADD:", s_norm, s_pages, flush=True)
                 print("    -----------------------------------", flush=True)
-                print('', flush=True)
+                print("", flush=True)
         added_strings.add(s_norm)
 
         if (
@@ -259,14 +278,15 @@ def build_str2wikipage_cache(
             and not skip_dump
         ):
             print(
-                f">> Dumping intermediate cache after processing {len(added_strings)} words", flush=True
+                f">> Dumping intermediate cache after processing {len(added_strings)} words",
+                flush=True,
             )
             checkpoint_caches(path_args, cache, disambig_cache, added_strings, suffix)
-            
+
     if verbose:
         print("Added:", added_strings, flush=True)
         print(">> Final cache size:", len(cache), flush=True)
-    
+
     if len(added_strings) > 0 and not skip_dump:
         checkpoint_caches(path_args, cache, disambig_cache, added_strings, suffix)
     else:
@@ -518,7 +538,8 @@ def get_segment_metadata(wikipath, segment, force=False, verbose=False):
         num_titles = len(seg_title_to_info)
         num_wtext = len(seg_title_to_info_wtext)
         print(
-            f">> Wrote metadata for {num_titles:6} titles ({num_wtext:6} with text) to {mdpath}", flush=True
+            f">> Wrote metadata for {num_titles:6} titles ({num_wtext:6} with text) to {mdpath}",
+            flush=True,
         )
 
 

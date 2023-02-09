@@ -71,7 +71,7 @@ def aggregate_checkpoint_dicts(
             full_dict.update(file_dict)
         print(">> Length of final dict:", len(full_dict))
         gu.checkpoint_json(data=full_dict, path=base_path)
-        
+
     if remove_processed:
         to_remove = [f for f in all_files if f != base_path]
         backups = [gu.get_backup_path(f) for f in to_remove]
@@ -81,6 +81,6 @@ def aggregate_checkpoint_dicts(
                 print(">> dry run remove:", f)
             else:
                 os.remove(f)
-        
+
         if not dry_run_remove:
             print(">> Intermediate files have been removed")
