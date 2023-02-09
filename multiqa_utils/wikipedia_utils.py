@@ -197,11 +197,11 @@ def build_str2wikipage_cache(
     processed = -1
     print(">> About to add new strings to cache:", len(strs_to_add), flush=True)
     print(">> No tqdm this time", flush=True)
-    # for s in tqdm(strs_to_add, disable=(not use_tqdm)):
+    #for s in tqdm(strs_to_add, disable=(not use_tqdm)):
     for s in strs_to_add:
         processed += 1
         print(">>   processing:", processed, flush=True)
-
+        
         s_norm = gu.normalize(s)
         if s_norm in cache or s_norm.strip() == "" or s.strip() == "":
             continue
@@ -226,8 +226,7 @@ def build_str2wikipage_cache(
             and len(added_strings) % write_every == 0
         ):
             print(
-                f">> Dumping intermediate cache after processing {len(added_strings)} words",
-                flush=True,
+                f">> Dumping intermediate cache after processing {len(added_strings)} words", flush=True
             )
             checkpoint_caches(path_args, cache, disambig_cache, added_strings, suffix)
 
@@ -483,8 +482,7 @@ def get_segment_metadata(wikipath, segment, force=False, verbose=False):
         num_titles = len(seg_title_to_info)
         num_wtext = len(seg_title_to_info_wtext)
         print(
-            f">> Wrote metadata for {num_titles:6} titles ({num_wtext:6} with text) to {mdpath}",
-            flush=True,
+            f">> Wrote metadata for {num_titles:6} titles ({num_wtext:6} with text) to {mdpath}", flush=True
         )
 
 
