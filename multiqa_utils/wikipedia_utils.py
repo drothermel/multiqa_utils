@@ -102,7 +102,7 @@ def get_initial_str2wikipage_cache(
 
 def string_to_wikipages(
     ent_str, disambig_cache={}, wikipage_cache=None, max_level=2, force_contains=True
-):
+):    
     # Return from cache if exists
     norm_e = gu.normalize(ent_str)
     if wikipage_cache is not None and norm_e in wikipage_cache:
@@ -114,6 +114,7 @@ def string_to_wikipages(
         first_answer = answers[0]
         return [gu.normalize(wikipedia.page(first_answer).title)], disambig_cache
     except wikipedia.DisambiguationError as e:
+        print("        ** Hit Disambig Error", flush=True)
         poss_ans_set, disambig_cache = wikipage_disambig_contains(
             ent_str,
             e.options,
@@ -149,9 +150,10 @@ def wikipage_disambig_contains(
             # Setup for next level of bfs
             # Cache disambig since queries take forever
             if tc in disambig_cache:
+                print("        *** But in disambig cache", flush=True)
                 for o in disambig_cache[tc]:
                     norm_o = gu.normalize(o)
-                    contains_check = norm_e in norm_o if force_contains else True
+                    contains_check = (norm_e in norm_o or norm_o in norm_e) if force_contains else True
                     if o not in checked and contains_check:
                         next_to_check.append(o)
             else:
@@ -162,7 +164,7 @@ def wikipage_disambig_contains(
                     disambig_cache[tc] = e.options
                     for o in e.options:
                         norm_o = gu.normalize(o)
-                        contains_check = norm_e in norm_o if force_contains else True
+                        contains_check = (norm_e in norm_o or norm_o in norm_e) if force_contains else True
                         if o not in checked and contains_check:
                             next_to_check.append(o)
                 except:
@@ -181,60 +183,94 @@ def build_str2wikipage_cache(
     use_tqdm=False,
     write_every=None,
     suffix="",
+    skip_dump=False,
+    skip_cache=False,
+    curr_cache=None,
+    verbose=False,
 ):
     gt_wikititle_set = build_gt_wikititle_set(path_args, force=False)
-    cache = get_initial_str2wikipage_cache(
-        gt_wikititle_set,
-        path_args,
-        use_tqdm=use_tqdm,
-        force=force,
-    )
+    if curr_cache is None:
+        cache = get_initial_str2wikipage_cache(
+            gt_wikititle_set,
+            path_args,
+            use_tqdm=use_tqdm,
+            force=force,
+        )
+    else:
+        cache = curr_cache
+    
     dc_exists = os.path.exists(path_args.disambig_cache_path)
     disambig_cache = json.load(open(path_args.disambig_cache_path)) if dc_exists else {}
 
     ## Then, for all new strings, if not in cache, do wikipedia seach + validate that the result is in GT
     added_strings = set()
     processed = -1
-    print(">> About to add new strings to cache:", len(strs_to_add), flush=True)
-    print(">> No tqdm this time", flush=True)
+    if verbose:
+        print(">> About to add new strings to cache:", len(strs_to_add), flush=True)
     #for s in tqdm(strs_to_add, disable=(not use_tqdm)):
     for s in strs_to_add:
         processed += 1
-        print(">>   processing:", processed, flush=True)
+        if verbose:
+            print(">>   processing:", processed, flush=True)
+
         
         s_norm = gu.normalize(s)
+        s_unnorm = gu.unnormalize(s_norm)
+        if verbose:
+            print("\n-------- Process String ---------------", flush=True)
+            print("string:", s, "| string_norm:", s_norm, "| string unnorm:", s_unnorm, flush=True)
         if s_norm in cache or s_norm.strip() == "" or s.strip() == "":
+            if verbose:
+                print("   Continue because:", flush=True)
+                print("           s_norm in cache?", s_norm in cache, flush=True)
+                print("           empty string?", s_norm.strip() == "" or s.strip() == "", flush=True)
             continue
 
         possible_pages, disambig_cache = string_to_wikipages(
-            gu.unnormalize(s_norm),
+            s_unnorm,
             disambig_cache=disambig_cache,
             wikipage_cache=cache,
             force_contains=True,
         )
+
         norm_pps = [gu.normalize(pp) for pp in possible_pages]
         s_pages = [npp for npp in norm_pps if npp in gt_wikititle_set]
+        if verbose:
+            print("Possible pages:", possible_pages, flush=True)
+            print("In gt wikititle:", s_pages, flush=True)
         if len(s_pages) == 0:
             continue
 
-        cache[s_norm] = s_pages
+        if not skip_cache:
+            cache[s_norm] = s_pages
+        else:
+            if verbose:
+                print('', flush=True)
+                print("    -----------------------------------", flush=True)
+                print("    >>>>>> WOULD ADD:", s_norm, s_pages, flush=True)
+                print("    -----------------------------------", flush=True)
+                print('', flush=True)
         added_strings.add(s_norm)
 
         if (
             write_every is not None
             and len(added_strings) > 0
             and len(added_strings) % write_every == 0
+            and not skip_dump
         ):
             print(
                 f">> Dumping intermediate cache after processing {len(added_strings)} words", flush=True
             )
             checkpoint_caches(path_args, cache, disambig_cache, added_strings, suffix)
-
-    print(">> Final cache size:", len(cache), flush=True)
-    if len(added_strings) > 0:
+            
+    if verbose:
+        print("Added:", added_strings, flush=True)
+        print(">> Final cache size:", len(cache), flush=True)
+    
+    if len(added_strings) > 0 and not skip_dump:
         checkpoint_caches(path_args, cache, disambig_cache, added_strings, suffix)
     else:
-        print(">> No changes, cache at:", cache_path, flush=True)
+        print(">> No changes, cache at:", path_args.cache_path, flush=True)
 
 
 ###################################

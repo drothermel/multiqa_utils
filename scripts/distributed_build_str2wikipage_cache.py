@@ -22,6 +22,9 @@ def run_build(job_id, total_num_jobs):
         job_id=job_id,
         total_num_jobs=total_num_jobs,
         all_strs_to_add=strs_to_add,
+        verbose=True,
+        curr_cache=curr_cache,
+        write_every=5000,
         use_tqdm=False,    
     )
     print(f">> Finished running job: {job_id}/{total_num_jobs}")
@@ -37,7 +40,8 @@ if __name__ == "__main__":
         sys.exit()
         
     job_id = int(os.environ["SLURM_ARRAY_TASK_ID"])
-    total_num_jobs = int(os.environ["SLURM_ARRAY_TASK_COUNT"])
+    #total_num_jobs = int(os.environ["SLURM_ARRAY_TASK_COUNT"])
+    total_num_jobs = 10
     print(f">> Running: {job_id} / {total_num_jobs}", flush=True)
     run_build(job_id, total_num_jobs)
     sys.exit()
