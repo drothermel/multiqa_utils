@@ -12,22 +12,24 @@ MANUAL_TRAIN_DECOMPOSITION_PATH = f"{DECOMP_DATA_DIR}/manual_decompositions_trai
 ## ================ Viz Util ================= ##
 ## =============================================== ##
 
+
 def print_data(data):
     for k, v in {
-        "Type": data['id'],
-        "Question": data['question'],
-        "Question Keywords": gu.get_question_keyword_str(data['question']),
-        "Answers": gu.get_answer_str(data['answers']),
-        "Len pos contexts": len(data['positive_ctxs']),
-        "Len ctxs": len(data['ctxs']),
+        "Type": data["id"],
+        "Question": data["question"],
+        "Question Keywords": gu.get_question_keyword_str(data["question"]),
+        "Answers": gu.get_answer_str(data["answers"]),
+        "Len pos contexts": len(data["positive_ctxs"]),
+        "Len ctxs": len(data["ctxs"]),
     }.items():
         print(f"{ k+':':20} {v}")
 
     gu.print_ctx_list(
-        data['positive_ctxs'],
-        answers=data['answers'],
-        question=data['question'],
+        data["positive_ctxs"],
+        answers=data["answers"],
+        question=data["question"],
     )
+
 
 ## =============================================== ##
 ## ================ General Util ================= ##
