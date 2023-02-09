@@ -79,6 +79,84 @@ def plot_nll_validation_from_dpr_retriever_useful_lines(useful_lines):
 
 # ===== Evaluate Retrieval Performance against GT ====== #
 
+# Easy viz of one question/answer datapoint
+def viz_correct_answers_context_list(data_point):
+    answer_llist = list(data_point["ans_mappings"].values())
+    print("Question:", data_point["question"])
+    print("Answers:", answer_llist)
+    rs = correct_answers_context_list(
+        context_list=data_point["ctxs"],
+        answer_llist=answer_llist,
+    )
+    print("-------")
+    returned_ans = rs["correct_answers"]
+    n_returned_ans = len(returned_ans)
+    n_contexts_w_answers = len(rs["correct_contexts"])
+    print("Returned Answers:", returned_ans)
+    print(
+        f"[Recall: {rs['recall'] * 100.0 :0.2f}%] {n_returned_ans} out of {rs['n_gt_ans']} in context list"
+    )
+    print(
+        f"[Precision: {rs['precision'] * 100.0 :0.2f}%] {n_contexts_w_answers} out of {rs['n_retrieved_ctx']} contexts contained an answer"
+    )
+
+
+# Calculate aggregate metrics on a dataset (currently can't limit the @k to anything)
+def evaluate_dataset(dataset, k=None):
+    recalls = []
+    precisions = []
+    f1s = []
+    for data_point in dataset:
+        ctxs = data_point["ctxs"][:k] if k is not None else data_point["ctxs"]
+        rs = correct_answers_context_list(
+            context_list=ctxs,
+            answer_llist=list(data_point["ans_mappings"].values()),
+        )
+        recalls.append(rs["recall"])
+        precisions.append(rs["precision"])
+        f1 = 0
+        f1_denom = rs["recall"] + rs["precision"]
+        if f1_denom > 0:
+            f1 = 2 * rs["recall"] * rs["precision"] / f1_denom
+        f1s.append(f1)
+    return {
+        "avg_recall": sum(recalls) / len(recalls),
+        "avg_precision": sum(precisions) / len(precisions),
+        "avg_f1": sum(f1s) / len(f1s),
+        "recalls": recalls,
+        "precisions": precisions,
+        "f1s": f1s,
+    }
+
+
+# Get relevant metrics for a single question/answer set + retrieved results
+# Expects a context to have a 'text' key and the answer_llist to be a list of
+#   lists of answers.
+def correct_answers_context_list(context_list, answer_llist):
+    correct_answers = set()
+    correct_contexts = set()
+    for ci, c in enumerate(context_list):
+        ctext = c["text"]
+        cbools = answers_in_context(context=ctext, answer_llist=answer_llist)
+        if any(cbools):
+            correct_contexts.add(ci)
+        corr_ansids = [ai for ai, ca in enumerate(cbools) if ca]
+        correct_answers.update(corr_ansids)
+    n_ans = len(answer_llist)
+    n_ctx = len(context_list)
+    n_corr_ans = len(correct_answers)
+    n_corr_ctx = len(correct_contexts)
+    return {
+        "correct_answers": [answer_llist[ai][0] for ai in correct_answers],
+        "correct_contexts": list(correct_contexts),
+        "recall": n_corr_ans / n_ans,
+        "precision_unique": n_ans / n_ctx,
+        "precision": n_corr_ctx / n_ctx,
+        "n_gt_ans": n_ans,
+        "n_retrieved_ctx": n_ctx,
+    }
+
+
 # Check whether any alias of the answer is in the context
 # - takes the context and a list of alias lists (one list per answer)
 # - returns a True/False presence list for (any alias of) all answers
