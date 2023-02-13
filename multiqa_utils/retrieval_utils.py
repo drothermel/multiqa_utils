@@ -134,7 +134,9 @@ def aggregate_strs_to_add_to_cache(
                 files, use_tqdm=use_tqdm
             )
             all_strs.update(wt_strs)
-            print(">> After Adding Wikipedia Tags and Links:", len(all_strs), flush=True)
+            print(
+                ">> After Adding Wikipedia Tags and Links:", len(all_strs), flush=True
+            )
 
     if curr_cache is not None:
         print(">> Removing strings already in cache", flush=True)

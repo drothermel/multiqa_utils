@@ -11,7 +11,7 @@ import re
 WORDS_TO_IGNORE_PATH = (
     "/scratch/ddr8143/repos/multiqa_utils/data_files/words_to_ignore.json"
 )
-WORDS_TO_IGNORE = None
+WORDS_TO_IGNORE = set(json.load(open(WORDS_TO_IGNORE_PATH)))
 
 GREEN_START = "\x1b[32m"
 RED_START = "\x1b[31m"
@@ -29,8 +29,11 @@ def current_default_path_args():
         "gt_wiki_postp_dir": "/scratch/ddr8143/wikipedia/tagme_dumps_qampari_wikipedia/postprocessed/",
         # Paths for setting up ent_str to wiki_page cache
         "gt_title_set_path": "/scratch/ddr8143/wikipedia/tagme_dumps_qampari_wikipedia/postprocessed/gt_title_set.json",
+        "no_text_pages": "/scratch/ddr8143/wikipedia/tagme_dumps_qampari_wikipedia/postprocessed/no_text_pages.json",
         "wikitags_path_regexp": "/scratch/ddr8143/wikipedia/tagme_dumps_qampari_wikipedia/postprocessed/title2linktagmestrs_*.json",
-        "strs_for_cache_path": "/scratch/ddr8143/wikipedia/tagme_dumps_qampari_wikipedia/postprocessed/strs_to_add_to_cache_v0.json",
+        # After running: remove_unneeded_lookup_strings, moved to v1
+        # "strs_for_cache_path": "/scratch/ddr8143/wikipedia/tagme_dumps_qampari_wikipedia/postprocessed/strs_to_add_to_cache_v0.json",
+        "strs_for_cache_path": "/scratch/ddr8143/wikipedia/tagme_dumps_qampari_wikipedia/postprocessed/strs_to_add_to_cache_v1.json",
         "cache_path": "/scratch/ddr8143/wikipedia/tagme_dumps_qampari_wikipedia/postprocessed/str2wikipage_cache.json",
         "disambig_cache_path": "/scratch/ddr8143/wikipedia/tagme_dumps_qampari_wikipedia/postprocessed/str2wikipage_disambig_cache.json",
     }
@@ -81,14 +84,8 @@ def checkpoint_json(
 ################################################
 
 
-def load_words_to_ignore():
-    if WORDS_TO_IGNORE is None:
-        WORDS_TO_IGNORE = set(json.load(open(WORDS_TO_IGNORE_PATH)))
-
-
 def parse_question_to_words(question):
     qbase = question.strip("?")
-    load_words_to_ignore()
     qwords = [w for w in qbase.split() if w not in WORDS_TO_IGNORE]
     return qwords
 
@@ -102,6 +99,15 @@ def color_text(text, color, match_list):
     for w in match_list:
         text = re.sub(w, start + w + COLOR_END, text, flags=re.IGNORECASE)
     return text
+
+
+def print_wrapped(text, width):
+    wrapped = textwrap.wrap(text, width=width)
+    for i, w in enumerate(wrapped):
+        if i == 0:
+            print(f"    >> {w}")
+        else:
+            print(f"       {w}")
 
 
 # {'text', 'title', 'score'}
@@ -119,10 +125,9 @@ def print_ctx(
     if answers is not None:
         print_ctx = color_text(print_ctx, "green", answers)
 
-    wrapped = textwrap.wrap(print_ctx, width=width)
-
     colored_title = color_text(ctx["title"], "green", answers)
     print(f"{ctx['score']:3.4f} | {colored_title}")
+    print_wrapped(print_ctx, width)
     for i, w in enumerate(wrapped):
         if i == 0:
             print(f"    >> {w}")

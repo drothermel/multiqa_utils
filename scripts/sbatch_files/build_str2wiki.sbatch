@@ -1,11 +1,11 @@
 #!/bin/bash
 #SBATCH --job-name=dist_build_str2wikipage_400_v0
-#SBATCH --array=0-399%100
+#SBATCH --array=0-9
 #SBATCH --open-mode=append
 #SBATCH --output=/scratch/ddr8143/multiqa/slurm_logs/%x_%A_j%a.out
 #SBATCH --error=/scratch/ddr8143//multiqa/slurm_logs/%x_%A_j%a.err
 #SBATCH --export=ALL
-#SBATCH --time=04:00:00
+#SBATCH --time=24:00:00
 #SBATCH --gres=gpu:rtx8000:0
 #SBATCH --mem=32G
 #SBATCH --nodes=1
