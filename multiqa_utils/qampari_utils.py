@@ -13,19 +13,20 @@ MANUAL_TRAIN_DECOMPOSITION_PATH = f"{DECOMP_DATA_DIR}/manual_decompositions_trai
 ## =============== Info Extractors =============== ##
 ## =============================================== ##
 
+
 def extract_answer_text(ans_dict):
-    return ans_dict['answer_text']
+    return ans_dict["answer_text"]
 
 
 def extract_answer_url(ans_dict):
-    if 'answer_url' not in ans_dict:
+    if "answer_url" not in ans_dict:
         return None
-    return ans_dict['answer_url'].split('wiki/')[-1]
+    return ans_dict["answer_url"].split("wiki/")[-1]
 
 
 def ans_normalize_and_split(ans):
     _RE_COMBINE_WHITESPACE = re.compile(r"\s+")
-    a = ans.strip("[]\" *\n,")
+    a = ans.strip('[]" *\n,')
     if "http" in a:
         a = a.split("http")[0]
     if "|" in a:
@@ -33,7 +34,7 @@ def ans_normalize_and_split(ans):
     if "\n" in a:
         a = a.split("\n")[0]
     a = a.strip("[] *\n,")
-    a = a.replace("’", "'").replace(":", '').replace("&", "&amp;")
+    a = a.replace("’", "'").replace(":", "").replace("&", "&amp;")
     a = _RE_COMBINE_WHITESPACE.sub(" ", a).strip()
     a = gu.normalize(a)
     return a
@@ -43,23 +44,27 @@ def ans_normalize_and_split(ans):
 ## ================ Viz Util ================= ##
 ## =============================================== ##
 
+
 def get_elem_keylist(d, elem_keys):
     for k in elem_keys:
         if k in d:
             return d[k]
-    return ''
+    return ""
+
 
 def print_data_header(data, answer_fxn=lambda k: k):
-    question = get_elem_keylist(data, ['question', 'question_text'])
-    answers = [answer_fxn(a) for a in get_elem_keylist(data, ['answers', 'answer_list'])]
-    
+    question = get_elem_keylist(data, ["question", "question_text"])
+    answers = [
+        answer_fxn(a) for a in get_elem_keylist(data, ["answers", "answer_list"])
+    ]
+
     for k, v in {
-        "Type": get_elem_keylist(data, ['id', 'qid']),
+        "Type": get_elem_keylist(data, ["id", "qid"]),
         "Question": question,
         "Question Keywords": gu.get_question_keyword_str(question),
         "Answers": gu.get_answer_str(answers),
     }.items():
-        print(f"{ k+':':20} {v}")   
+        print(f"{ k+':':20} {v}")
 
 
 def print_retrieval_data(data):
@@ -75,29 +80,32 @@ def print_retrieval_data(data):
         answers=data["answers"],
         question=data["question"],
     )
-    
+
+
 def print_answer_data(
     data,
     answer_fxn=extract_answer_text,
     width=100,
 ):
     print_data_header(data, answer_fxn)
-    answers = data['answer_list']
+    answers = data["answer_list"]
     print()
     for ad in answers:
-        print("Answer: ", gu.color_text(ad['answer_text'], 'green', [ad['answer_text']]))
-        print('    Answer URL:', get_elem_keylist(ad, ['answer_url']))
-        print('    Proofs:')
-        for i, proof in enumerate(ad['proof']):
+        print(
+            "Answer: ", gu.color_text(ad["answer_text"], "green", [ad["answer_text"]])
+        )
+        print("    Answer URL:", get_elem_keylist(ad, ["answer_url"]))
+        print("    Proofs:")
+        for i, proof in enumerate(ad["proof"]):
             p_text = gu.color_text(
-                proof['proof_text'].replace('\n', ' '),
-                'green',
-                [ad['answer_text'].lower()],
+                proof["proof_text"].replace("\n", " "),
+                "green",
+                [ad["answer_text"].lower()],
             )
             wiki_title = gu.color_text(
-                proof['found_in_url'].split('/wiki/')[-1].replace("_", " "),
-                'green',
-                [ad['answer_text']],
+                proof["found_in_url"].split("/wiki/")[-1].replace("_", " "),
+                "green",
+                [ad["answer_text"]],
             )
             p_text = f"({wiki_title}) {p_text}"
             gu.print_wrapped(p_text, width)
@@ -170,5 +178,3 @@ def load_wikidata_train_data(dpath=f"{DOWNLOADED_DATA_DIR}train_data.jsonl"):
                 continue
             qmp_train.append(d)
     return qmp_train
-
-

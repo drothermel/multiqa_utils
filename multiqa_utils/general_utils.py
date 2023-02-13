@@ -109,6 +109,7 @@ def print_wrapped(text, width):
         else:
             print(f"       {w}")
 
+
 # {'text', 'title', 'score'}
 def print_ctx(
     ctx,
@@ -123,8 +124,6 @@ def print_ctx(
 
     if answers is not None:
         print_ctx = color_text(print_ctx, "green", answers)
-
-
 
     colored_title = color_text(ctx["title"], "green", answers)
     print(f"{ctx['score']:3.4f} | {colored_title}")
