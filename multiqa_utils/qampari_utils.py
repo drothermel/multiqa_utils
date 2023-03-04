@@ -148,6 +148,14 @@ def random_sample_n_per_type(qtype_ind_list, n, verbose=True):
             print(f"{k + ':':25} {len(v):4}, first 5: {v[:5]}")
     return random_sample
 
+def load_train_data(dpath=f"{DOWNLOADED_DATA_DIR}train_data.jsonl"):
+    qmp_train = []
+    with open(dpath) as f:
+        qmp_traind_iter = jsonlines.Reader(f)
+        for d in qmp_traind_iter:
+            qmp_train.append(d)
+    return qmp_train
+
 
 def load_dev_data(dpath=f"{DOWNLOADED_DATA_DIR}dev_data.jsonl"):
     qmp_dev = []
