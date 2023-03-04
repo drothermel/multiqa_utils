@@ -1,10 +1,12 @@
 import json
 import jsonlines
 import os
+import time
 from collections import defaultdict
 
 import multiqa_utils.openai_utils as ou
 import multiqa_utils.qampari_utils as qu
+import multiqa_utils.general_utils as gu
 
 ## =============================================== ##
 ## ==================== Loading ================== ##
@@ -97,7 +99,10 @@ def prompt_output_to_eval_dict(init_dict, qprompt, result_text, manual_check=Fal
 
 
 def decompose_indmap_with_prompt(
-    to_eval_dev_inds, outfile, dataset="qampari", progress_increment=10
+    to_eval_dev_inds, 
+    outfile,
+    dataset="qampari", progress_increment=10,
+    engine='text-davinci-003',
 ):
     assert dataset == "qampari"
     manual_train_decomp = load_manual_train_decomp(dataset)
@@ -119,13 +124,70 @@ def decompose_indmap_with_prompt(
                 qprompt = get_qmp_decomp_prompt_v1(
                     qmp_train, manual_train_decomp, qmp_dev[qid]
                 )
-                _, res_text = ou.prompt_openai(qprompt)
+                _, res_text = ou.prompt_openai(qprompt, engine=engine)
                 q_output = prompt_output_to_eval_dict(
                     qdata,
                     qprompt,
                     res_text,
                 )
                 writer.write(q_output)
+    print("Fnished Decomp & Wrote:", outfile)
+    
+
+    
+def decompose_with_prompt(
+    data_to_decompose, 
+    outfile,
+    dataset="qampari",
+    progress_increment=10,
+    engine='text-davinci-003',
+    rate_limit=19,
+):
+    assert dataset == "qampari"
+    manual_train_decomp = load_manual_train_decomp(dataset)
+    qmp_train = qu.load_wikidata_train_data()
+    mode = 'w'
+    
+    if os.path.exists(outfile):
+        mode = 'a'
+        already_decomp = set([d['qid'] for d in gu.loadjsonl(outfile)])
+        print("Initial data len:", len(data_to_decompose))
+        data_to_decompose = [d for d in data_to_decompose if d['qid'] not in already_decomp]
+        print("  - after loading:", len(already_decomp), "new len:", len(data_to_decompose))
+
+    
+    time_per_query = 60.0 / rate_limit
+    total_start = time.time()
+    start = time.time()
+    with jsonlines.open(outfile, mode=mode) as writer:
+        for i, qdata in enumerate(data_to_decompose):
+            if i % progress_increment == 0:
+                print(f">> [{(time.time() - total_start)/60.0:0.1f}] elem {i:,} / {len(data_to_decompose):,}")
+            
+            qprompt = get_qmp_decomp_prompt_v1(
+                qmp_train, manual_train_decomp, qdata
+            )
+            _, res_text = ou.prompt_openai(qprompt, engine=engine)
+            while res_text is None:
+                print("  -> Hit strange rate limit, sleep for two minutes and try again.")
+                time.sleep(120)
+                _, res_text = ou.prompt_openai(qprompt, engine=engine)
+                print("        ===> okkk, lets go!")
+            
+            q_output = prompt_output_to_eval_dict(
+                qdata,
+                qprompt,
+                res_text,
+            )
+            writer.write(q_output)
+            end = time.time()
+            print("Raw time:", end - start)
+            while end - start < time_per_query:
+                time.sleep(5.0)
+                end = time.time()
+                #print("  - New time:", end - start)
+            print("  -> Total time:", end-start)
+            start = end
     print("Fnished Decomp & Wrote:", outfile)
 
 

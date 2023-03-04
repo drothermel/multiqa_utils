@@ -77,6 +77,13 @@ def checkpoint_json(
             shutil.move(cp_base, cp_backup)
     json.dump(data, open(cp_base, "w+"))
     print(">> Dumped:", cp_base, flush=True)
+    
+def loadjsonl(filename):
+    all_lines = []
+    with jsonlines.open(filename) as reader:
+        for obj in reader:
+            all_lines.append(obj)
+    return all_lines
 
 
 ################################################
