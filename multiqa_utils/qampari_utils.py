@@ -23,6 +23,7 @@ def extract_answer_url(ans_dict):
         return None
     return ans_dict["answer_url"].split("wiki/")[-1]
 
+
 # Takes a list of qampari data and uses the 'qid' value to
 #   produce lists of indices for each question type.
 def split_dataset_by_question_type(data_list, verbose=True):
@@ -126,4 +127,3 @@ def print_answer_data(
             p_text = f"({wiki_title}) {p_text}"
             tvu.print_wrapped(p_text, width)
         print()
-

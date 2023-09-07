@@ -6,6 +6,7 @@ import jsonlines
 
 import utils.run_utils as ru
 
+
 def setup_apikey(keyfile="/scratch/ddr8143/.openai_secretkey.txt"):
     openai.api_key = open(keyfile).readlines()[0].strip()
     logging.info(">> API key set")
@@ -37,12 +38,12 @@ def get_prompt_base(prompt_path):
 def process_with_prompt(
     data_to_process,
     base_prompt_path,
-    make_prompt_fxn, # takes (base_prompt, data_elem)
+    make_prompt_fxn,  # takes (base_prompt, data_elem)
     outfile,
     engine="text-davinci-003",
     progress_increment=10,
     rate_limit=-1,  # prompts/min, neg = None
-    id_field='qid', # used for caching results
+    id_field="qid",  # used for caching results
 ):
     base_prompt = get_prompt_base(base_prompt_path)
 
@@ -50,9 +51,7 @@ def process_with_prompt(
     mode = "w+"
     if os.path.exists(outfile):
         mode = "a+"
-        already_processed = set(
-            [d[id_field] for d in fu.load_file(outfile)]
-        )
+        already_processed = set([d[id_field] for d in fu.load_file(outfile)])
         logging.info(f">> Initial data len: {len(data_to_process):,}")
         data_to_process = [
             d for d in data_to_process if d[id_field] not in already_processed

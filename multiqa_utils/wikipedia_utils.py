@@ -20,7 +20,7 @@ import utils.file_utils as fu
 #    3) Format the final output file into a .jsonl in the format expected by pyserini index builder
 def postprocess_wikipedia_segment_to_page_index(infile, outfile, verbose=True):
     clean = re.compile("<.*?>")
-    orig_file = fu.load_file(infile, ending='.jsonl')
+    orig_file = fu.load_file(infile, ending=".jsonl")
 
     postprocess_pages = []
     for obj in orig_file:
@@ -35,5 +35,3 @@ def postprocess_wikipedia_segment_to_page_index(infile, outfile, verbose=True):
             )
 
     fu.dumpjsonl(postprocess_pages, outfile, verbose=verbose)
-
-
