@@ -6,9 +6,9 @@ import jsonlines
 import multiqa_utils.general_utils as gu
 
 
-def setup_apikey(file="/scratch/ddr8143/.openai_secretkey.txt"):
+def setup_apikey(keyfile="/scratch/ddr8143/.openai_secretkey.txt"):
     openai.api_key = (
-        open("/scratch/ddr8143/.openai_secretkey.txt").readlines()[0].strip()
+        open(keyfile).readlines()[0].strip()
     )
     print(">> API key set")
 
