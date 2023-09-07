@@ -9,12 +9,9 @@ if __name__ == "__main__":
 
     filename = args.input
     outname = args.input + "l"
-    
+
     jsondata = json.load(open(filename))
-    writer = jsonlines.Writer(open(outname, 'w+'))
+    writer = jsonlines.Writer(open(outname, "w+"))
     writer.write_all(jsondata)
     writer.close()
     print("Wrote:", outname)
-
-
-
