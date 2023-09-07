@@ -41,7 +41,6 @@ def process_with_prompt(
     make_prompt_fxn,  # takes (base_prompt, data_elem)
     outfile,
     engine="text-davinci-003",
-    progress_increment=10,
     rate_limit=-1,  # prompts/min, neg = None
     id_field="qid",  # used for caching results
 ):
