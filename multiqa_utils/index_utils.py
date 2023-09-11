@@ -8,6 +8,20 @@ from pyserini.search.lucene import LuceneSearcher
 import utils.file_utils as fu
 import utils.run_utils as ru
 
+# Deterministic ordering to allow for sharding
+def data_to_query_list(data_list, id_fxn, text_fxn):
+    query_list = [
+        {
+            'id': id_fxn(v),
+            'text': text_fxn(v),
+            'data': v,
+        } for v in data_list
+    ]
+    query_list = sorted(
+        query_list, key=lambda d: d['id'],
+    )
+    return proof_query_list
+
 def searcher_out_to_list_of_dicts(searcher_out):
     return [{
         'score': so.score,
@@ -61,8 +75,8 @@ if __name__ == '__main__':
 
     print("Preprocessing")
     test_qd = [qd for i, qd in enumerate(qmp_dev) if i < 10]
-    proof_data = du.qmp_raw_to_proof_info(test_qd)
-    proof_query_list = du.qmp_proof_data_to_query_list(proof_data)
+    #proof_data = du.qmp_raw_to_proof_info(test_qd)
+    #proof_query_list = proof_data_to_query_list(proof_data)
     index_path = '/scratch/ddr8143/wikipedia/indexes/qampari_wikipedia_chunked_fixed_v0'
     
     print("Running")
