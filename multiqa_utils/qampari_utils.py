@@ -17,15 +17,20 @@ MANUAL_TRAIN_DECOMPOSITION_PATH = f"{DECOMP_DATA_DIR}/manual_decompositions_trai
 
 # ---- ID ---- #
 
+
 def get_id(qdata):
-    return qdata['qid']
+    return qdata["qid"]
+
 
 # ---- Question ---- #
 
+
 def get_question(qdata):
-    return qdata['question_text']
+    return qdata["question_text"]
+
 
 # ---- Answers ---- #
+
 
 def get_answer(ans_dict):
     return ans_dict["answer_text"]
@@ -38,31 +43,30 @@ def get_answer_url(ans_dict):
 
 
 def get_answer_aliases(ans_dict):
-    return ans_dict['aliases']
+    return ans_dict["aliases"]
+
 
 def get_answer_proofs(ans_dict):
-    return ans_dict['proof']
+    return ans_dict["proof"]
 
 
 def get_answer_set(qdata):
-    return set([a["answer_text"] for a in qdata['answer_list']])
+    return set([a["answer_text"] for a in qdata["answer_list"]])
 
 
 def get_answer_aliases_dict(qdata):
-    return {
-        get_answer(a): get_answer_aliases(a) for a in qdata['answer_list']
-    }
+    return {get_answer(a): get_answer_aliases(a) for a in qdata["answer_list"]}
+
 
 def get_answer_aliases_urls_dict(qdata):
     ans2urlalias = {}
-    for ans_dict in qdata['answer_list']:
+    for ans_dict in qdata["answer_list"]:
         ans = get_answer(ans_dict)
         ans2urlalias[ans] = {
-            'url': get_answer_url(ans),
-            'aliases': get_answer_aliases(ans),
+            "url": get_answer_url(ans),
+            "aliases": get_answer_aliases(ans),
         }
     return ans2urlalias
-    
 
 
 # ---- Entities ---- #
@@ -80,7 +84,9 @@ def get_gtentities(qata, good_only=False):
         ent2urlalias[ent]["aliases"].update([a for a in ent_dict["aliases"]])
     return ent2urlalias
 
+
 # ---- Proof Data ---- #
+
 
 def get_proof_data(qdata):
     # Include info about all answers to the question
@@ -88,24 +94,27 @@ def get_proof_data(qdata):
     ans2urlalias = get_answer_aliases_urls_dict(qdata)
 
     q_proof_data = {}
-    for ans_dict in qdata['answer_list']:
+    for ans_dict in qdata["answer_list"]:
         annotated_answer = get_answer(ans_dict)
         for proof_dict in get_answer_proofs(ans_dict):
-            proof = proof_dict['proof_text']
+            proof = proof_dict["proof_text"]
             if proof not in q_proof_data:
-                q_proof_data['proof'] = {
-                    'proof': proof
-                    'usage_list': [],
+                q_proof_data["proof"] = {
+                    "proof": proof,
+                    "usage_list": [],
                 }
-            q_proof_data[proof]['usage_list'].append({
-                'proof_url': proof_dict['found_in_url'],
-                'pid': proof_dict['pid'],
-                'qid': get_id(qdata),
-                'question': get_question(qdata),
-                'all_answers': ans2urlalias,
-                'annotated_answer': answer,
-            })
+            q_proof_data[proof]["usage_list"].append(
+                {
+                    "proof_url": proof_dict["found_in_url"],
+                    "pid": proof_dict["pid"],
+                    "qid": get_id(qdata),
+                    "question": get_question(qdata),
+                    "all_answers": ans2urlalias,
+                    "annotated_answer": answer,
+                }
+            )
     return q_proof_data
+
 
 def get_all_proof_data(qmp_data):
     proof_data = {}
@@ -115,38 +124,37 @@ def get_all_proof_data(qmp_data):
         # by combining the usage_lists
         for proof, pd in q_proof_data:
             if proof not in proof_data:
-                pd['proof_ind'] = len(proof_data)
+                pd["proof_ind"] = len(proof_data)
                 proof_data[proof] = pd
             else:
-                proof_data[proof]['usage_list'].extend(
-                    pd['usage_list']
-                )
+                proof_data[proof]["usage_list"].extend(pd["usage_list"])
     return proof_data
+
 
 def collect_proof_stats(qmp_data):
     md = {
-        'proofs_per_question': [],
-        'proofs_per_answer': [],
+        "proofs_per_question": [],
+        "proofs_per_answer": [],
     }
     mentions_per_proof = defaultdict(int)
     for qdata in qmp_data:
         proofs_per_answer = []
-        for ans_dict in qdata['answer_list']:
+        for ans_dict in qdata["answer_list"]:
             proof_dict = get_answer_proofs(ans_dict)
             proofs_per_answer.append(len(proof_dict))
             for proof in proof_dict.keys():
                 mentions_per_proof[proof] += 1
-        md['proofs_per_answer'].extend(proofs_per_answer)
-        md['proofs_per_question'].append(sum(proofs_per_answer))
-    md['num_proofs'] = sum(md['proofs_per_question'])
-    md['num_unique_proofs'] = len(mentions_per_proof)
-    md['mentions_per_proof'] = mentions_per_proof.values()
-    md['num_answers_without_proofs'] = len([
-        ppa for ppa in md['proofs_per_answer'] if ppa == 0
-    ])
-    md['mentions_per_proof'] = [len(pd) for pd in proof_data_dict.values()]
+        md["proofs_per_answer"].extend(proofs_per_answer)
+        md["proofs_per_question"].append(sum(proofs_per_answer))
+    md["num_proofs"] = sum(md["proofs_per_question"])
+    md["num_unique_proofs"] = len(mentions_per_proof)
+    md["mentions_per_proof"] = mentions_per_proof.values()
+    md["num_answers_without_proofs"] = len(
+        [ppa for ppa in md["proofs_per_answer"] if ppa == 0]
+    )
+    md["mentions_per_proof"] = [len(pd) for pd in proof_data_dict.values()]
     return md
-            
+
 
 ## =============================================== ##
 ## ============= Dataset Processing  ============= ##
@@ -190,22 +198,22 @@ def random_sample_n_per_type(qtype_ind_list, n, verbose=True):
 # TODO: find qmp_anslist_to_proof_data
 def qmp_data_to_dpr_format(qmp_data):
     metadata = {
-        'total_num_proofs': 0,
-        'without_proofs': [],
-        'without_titles': [],
-        'without_proof_text': [],
-        'without_ans_in_text': [],
+        "total_num_proofs": 0,
+        "without_proofs": [],
+        "without_titles": [],
+        "without_proof_text": [],
+        "without_ans_in_text": [],
     }
 
     output_data = []
     for qd in qmp_data:
-        question = qd['question_text'].lower().strip('?').strip()
+        question = qd["question_text"].lower().strip("?").strip()
         proof_data, all_answers, q_metadata = qmp_anslist_to_proof_data(
-            qd['answer_list']
+            qd["answer_list"]
         )
         # Update the metadata
         for k in metadata.keys():
-            if k == 'total_num_proofs':
+            if k == "total_num_proofs":
                 metadata[k] += q_metadata[k]
             else:
                 metadata[k].extend(q_metadata[k])
@@ -213,19 +221,23 @@ def qmp_data_to_dpr_format(qmp_data):
         # Create dpr style contexts and samples
         ctxs = []
         for pd in proof_data:
-            ctxs.append({
-                'id': pd['pid'],
-                'title': pd['approx_qnn_title'],
-                'text': pd['processed_text'],
-                'score': 100.0,
-                'has_answer': True,
-            })
+            ctxs.append(
+                {
+                    "id": pd["pid"],
+                    "title": pd["approx_qnn_title"],
+                    "text": pd["processed_text"],
+                    "score": 100.0,
+                    "has_answer": True,
+                }
+            )
         if len(ctxs) > 0:
-            output_data.append({
-                'question': question,
-                'answers': all_answers,
-                'ctxs': ctxs,
-            })
+            output_data.append(
+                {
+                    "question": question,
+                    "answers": all_answers,
+                    "ctxs": ctxs,
+                }
+            )
     return output_data, metadata
 
 

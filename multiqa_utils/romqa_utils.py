@@ -1,22 +1,28 @@
-
 # ---- ID ---- #
 
+
 def get_id(qdata):
-    return qdata['id']
+    return qdata["id"]
+
 
 # ---- Question ---- #
 
+
 def get_question(qdata):
-    return qdata['question']
+    return qdata["question"]
+
 
 # ---- Answers ---- #
 def get_answer_set(qdata):
     return set([a["text"] for a in d["complete_answer"]])
 
+
 def get_answer_dict(qdata):
     return {a["text"]: a["aliases"] for a in d["complete_answer"]}
 
+
 # ---- Entities ---- #
+
 
 def get_gtentities(elem):
     # Note that rqa entities are always good due to dataset construction

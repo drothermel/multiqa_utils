@@ -9,13 +9,52 @@ import wikipedia
 import re
 import multiprocessing
 import numpy as np
+import html
 
 import utils.file_utils as fu
 import utils.run_utils as ru
 import multiqa_utils.dpr_tokenizer_utils as tu
 from multiqa_utils.helper_classes import StringKey, PassageData, SidNormer, Ori2Ent
 
+###################################
+##    Process New Wikidump       ##
+###################################
+
+# TODO: pull in the utils from QAMPARI repo here too
+
+# After wikiextractor has already processed the wikidump then we can
+# use this to create base files for a page index.
+#
+# HTML Escaping from: https://medium.com/@jorlugaqui/how-to-strip-html-tags-from-a-string-in-python-7cb81a2bbf44
+# This will:
+#    1) Remove any html tags remaining from the text
+#    2) Append the keywords "Title:" and "Article:" along with the title to the text
+#    3) Format the final output file into a .jsonl in the format expected by pyserini index builder
+def postprocess_wikipedia_segment_to_page_index(infile, outfile, verbose=True):
+    clean = re.compile("<.*?>")
+    orig_file = fu.load_file(infile, ending=".jsonl")
+
+    postprocess_pages = []
+    for obj in orig_file:
+        if obj["text"]:
+            cleaned_text = re.sub(clean, "", html.unescape(obj["text"]))
+            new_text = f"Title: {obj['title']}\nArticle: {cleaned_text}"
+            postprocess_pages.append(
+                {
+                    "id": obj["id"],
+                    "contents": new_text,
+                }
+            )
+
+    fu.dumpjsonl(postprocess_pages, outfile, verbose=verbose)
+
+
+###################################
+##    Extract Wiki Graph Data    ##
+###################################
+
 ## ---- Path Builder Utils ---- ##
+
 
 def get_graph_data_path(cfg, graph_type, data_type):
     assert graph_type in cfg.graph_types
@@ -33,19 +72,23 @@ def get_ori2entdetailed_path(cfg, graph_type, str_ent_type):
     assert str_ent_type in cfg.str_ent_types
     return f"{cfg.postp_dir}{graph_type}__ori2entdetailed_{str_ent_type}.pkl"
 
+
 def get_mapped_file(mapped_dir, input_name):
-    return f'{mapped_dir}{input_name}_mapped.pkl'
+    return f"{mapped_dir}{input_name}_mapped.pkl"
+
 
 def get_all_mapped_files(mapped_dir):
-    return sorted(glob.glob(get_mapped_file(mapped_dir, '*')))
-    
+    return sorted(glob.glob(get_mapped_file(mapped_dir, "*")))
+
+
 ## ---- Key Parsing ---- ##
+
 
 def get_norm_bool_from_ent_str_type(ent_str_type):
     ent_s, str_s = ent_str_type.split()
-    norm_bools = (ent_s[0] == 'q', str_s[0] == 'q')
+    norm_bools = (ent_s[0] == "q", str_s[0] == "q")
     return norm_bools
-        
+
 
 ## --------- Postprocess Wikipedia v2 ----------##
 
@@ -182,19 +225,19 @@ def reducing__graphs(cfg, str_key, keys_to_run=None, test=False):
                     conv_v=convert_v,
                 )
 
-    # Then dup results
+    # Then dump results
     for graph_type in cfg.graph_types:
         for name, data in out_dicts[graph_type].items():
-            fu.dumppkl(data, get_graph_data_path(cfg, graph_type, name)
+            fu.dumppkl(data, get_graph_data_path(cfg, graph_type, name))
     logging.info(">> Finished reducing round 2: All graph dicts")
 
 
 def group_ori_by_ent(
-    ori2cidentcount,# input
-    str_key,        # input
-    sid_normer,     # input
-    ori2ent2tot,    # output
-    ori2ent2cids,   # output
+    ori2cidentcount,  # input
+    str_key,  # input
+    sid_normer,  # input
+    ori2ent2tot,  # output
+    ori2ent2cids,  # output
     ori2ent2pages,  # output
     qstr=False,
     qent=False,
@@ -226,6 +269,7 @@ def group_ori_by_ent(
                 ori2ent2cids[ori_sid_key][ent_sid_key].add(cid)
                 ori2ent2pages[ori_sid_key][ent_sid_key].add(page_id)
 
+
 def reducing__ori2entdetailed(
     cfg,
     str_key,
@@ -236,12 +280,12 @@ def reducing__ori2entdetailed(
 ):
     files = get_all_mapped_files(cfg.wiki_mapped_dir)
     files = files[:3] if test else files
-    
+
     # Get normalization information for data_types
     data_types_dict = {}
     for data_type in data_types:
         data_types_dict[data_type] = get_norm_bool_from_ent_str_type(data_type)
-        
+
     # Make intermediate dicts for aggregating stats
     int_dicts = {}
     for graph_type in graph_types:
@@ -305,7 +349,7 @@ def reducing__ori2entdetailed(
     # Finally, save the data
     for graph_type in graph_types:
         for name, data in out_dicts[graph_type].items():
-            fu.dumppkl(data, get_ori2entdetailed_path(cfg, graph_type, name)
+            fu.dumppkl(data, get_ori2entdetailed_path(cfg, graph_type, name))
 
 
 ## --------- v2: Mapping Functions ----------##

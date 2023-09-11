@@ -1,5 +1,3 @@
-
-
 import utils.file_utils as fu
 import multiqa_utils.qampari_utils as qmp
 import multiqa_utils.romqa_utils as rqa
@@ -15,13 +13,14 @@ DATASET_UTILS = {
     "quest": qst,
 }
 DATASET_NAMES = {
-    'qampari': ("qmp", "qampari"),
-    'romqa': ("rqa", "romqa"),
-    'quest': ("qst", "quest"),
+    "qampari": ("qmp", "qampari"),
+    "romqa": ("rqa", "romqa"),
+    "quest": ("qst", "quest"),
 }
-SPLIT_NAMES = ['dev', 'train', 'test']
+SPLIT_NAMES = ["dev", "train", "test"]
 
 # ---------- Dataset Loading ----------- #
+
 
 def data_type_to_name_split(data_type):
     splits = []
@@ -39,10 +38,10 @@ def data_type_to_name_split(data_type):
     assert len(splits) == 1 and len(names) == 1, f"Invalid type {data_type}"
     return names[0], splits[0]
 
-    
+
 def data_to_dict(data_list, data_type):
     return {get_id(d, name): d for d in data_list}
-    
+
 
 # path_cfg: must contain elq_datasets and base_datasets
 def get_data(path_cfg, data_type, as_dict=False, verbose=False):
@@ -62,14 +61,18 @@ def get_data(path_cfg, data_type, as_dict=False, verbose=False):
 def get_id(data_elem, data_name):
     return DATASET_UTILS[data_name].get_id(data_elem)
 
+
 def get_question(data_elem, data_name):
     return DATASET_UTILS[data_name].get_question(data_elem)
+
 
 def get_answer_set(data_elem, data_name):
     return DATASET_UTILS[data_name].get_answer_set(data_elem)
 
+
 def get_answer_dict(data_elem, data_name):
     return DATASET_UTILS[data_name].get_answer_dict(data_elem)
+
 
 def get_gtentities(data_elem, data_name):
     return DATASET_UTILS[data_name].get_gtentities(data_elem)
@@ -90,14 +93,13 @@ def get_elq_entoriqnn(edata):
     ]
 
 
-
-if __name__  == '__main__':
+if __name__ == "__main__":
     print("Loading")
-    qmp_dev_path = '/scratch/ddr8143/multiqa/downloads/data/qampari/dev_data.jsonl'
+    qmp_dev_path = "/scratch/ddr8143/multiqa/downloads/data/qampari/dev_data.jsonl"
     qmp_dev = fu.load_file(qmp_dev_path)
 
     print("Running")
     test_qd = [qd for i, qd in enumerate(qmp_dev) if i < 10]
-    #proof_data = qmp_raw_to_proof_info(test_qd)
-    #proof_query_list = qmp_proof_data_to_query_list(proof_data)
-    #breakpoint()
+    # proof_data = qmp_raw_to_proof_info(test_qd)
+    # proof_query_list = qmp_proof_data_to_query_list(proof_data)
+    # breakpoint()

@@ -30,23 +30,28 @@ def longest_common_substring(x: str, y: str) -> (int, int, int):
 
         # upper right triangle of the 2D array
         for k in range(len(x)):
-            yield from ((longest_common_prefix(i, j), i, j)
-                        for i, j in zip(range(k, -1, -1),
-                                        range(len(y) - 1, -1, -1)))
+            yield from (
+                (longest_common_prefix(i, j), i, j)
+                for i, j in zip(range(k, -1, -1), range(len(y) - 1, -1, -1))
+            )
 
         # lower left triangle of the 2D array
         for k in range(len(y)):
-            yield from ((longest_common_prefix(i, j), i, j)
-                        for i, j in zip(range(k, -1, -1),
-                                        range(len(x) - 1, -1, -1)))
+            yield from (
+                (longest_common_prefix(i, j), i, j)
+                for i, j in zip(range(k, -1, -1), range(len(x) - 1, -1, -1))
+            )
 
     # returning the maximum of all the subproblems
     return max(digonal_computation(), key=itemgetter(0), default=(0, 0, 0))
 
+
 # ---------- Normalization Utils ----------- #
+
 
 def get_detokenizer():
     return MosesDetokenizer(lang="en")
+
 
 # Normalization used by qmp when loading in wiki title and text
 # So the chunks already have this and we should apply it to the
@@ -75,6 +80,7 @@ def fix_qu(string):
             replace_with = f'"{res.group(1)}"'
             string = string.replace(to_replace, replace_with)
     return string
+
 
 # The version of norm that qampari provides in
 #     models/evaluation/reader_metrics.py

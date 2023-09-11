@@ -12,25 +12,38 @@ import utils.run_utils as ru
 def data_to_query_list(data_list, id_fxn, text_fxn):
     query_list = [
         {
-            'id': id_fxn(v),
-            'text': text_fxn(v),
-            'data': v,
-        } for v in data_list
+            "id": id_fxn(v),
+            "text": text_fxn(v),
+            "data": v,
+        }
+        for v in data_list
     ]
     query_list = sorted(
-        query_list, key=lambda d: d['id'],
+        query_list,
+        key=lambda d: d["id"],
     )
     return proof_query_list
 
+
 def searcher_out_to_list_of_dicts(searcher_out):
-    return [{
-        'score': so.score,
-        **json.loads(so.raw),
-    } for so in searcher_out]
+    return [
+        {
+            "score": so.score,
+            **json.loads(so.raw),
+        }
+        for so in searcher_out
+    ]
+
 
 def bm25_batch_query_dump(
-    index_path, query_data_list, num_threads, top_k,
-    batch_size, output_base, id_key='id', query_key='text',
+    index_path,
+    query_data_list,
+    num_threads,
+    top_k,
+    batch_size,
+    output_base,
+    id_key="id",
+    query_key="text",
 ):
     logging.info(f">> Loading index: {index_path}")
     searcher = LuceneSearcher(index_path)
@@ -59,30 +72,34 @@ def bm25_batch_query_dump(
             query_id = qd[id_key]
             query_out_list = searcher_out_to_list_of_dicts(searcher_out[query_id])
             query_out_w_data = copy.deepcopy(qd)
-            query_out_w_data['ctxs'] = query_out_list
+            query_out_w_data["ctxs"] = query_out_list
             batch_query_with_results.append(query_out_w_data)
         # Dump for each batch
         fu.dumpjsonl(
             batch_query_with_results,
-            f'{output_base}_{i}.jsonl',
+            f"{output_base}_{i}.jsonl",
             verbose=False,
         )
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     print("Loading")
     path_args = fu.current_default_path_args()
-    qmp_dev = fu.get_data(path_args, 'qmp_dev')
+    qmp_dev = fu.get_data(path_args, "qmp_dev")
 
     print("Preprocessing")
     test_qd = [qd for i, qd in enumerate(qmp_dev) if i < 10]
-    #proof_data = du.qmp_raw_to_proof_info(test_qd)
-    #proof_query_list = proof_data_to_query_list(proof_data)
-    index_path = '/scratch/ddr8143/wikipedia/indexes/qampari_wikipedia_chunked_fixed_v0'
-    
+    # proof_data = du.qmp_raw_to_proof_info(test_qd)
+    # proof_query_list = proof_data_to_query_list(proof_data)
+    index_path = "/scratch/ddr8143/wikipedia/indexes/qampari_wikipedia_chunked_fixed_v0"
+
     print("Running")
     proofs_with_context = bm25_batch_query(
-        index_path, proof_query_list, 10, 1,
-        id_key='pid', query_key='proof',
+        index_path,
+        proof_query_list,
+        10,
+        1,
+        id_key="pid",
+        query_key="proof",
     )
     breakpoint()
-

@@ -144,8 +144,13 @@ class StringKey:
 
 class PassageData:
     def __init__(
-        self, data_dir, name, prep2titles=False, extra_norms=False, 
-        load_page_data=True, reset=False,
+        self,
+        data_dir,
+        name,
+        prep2titles=False,
+        extra_norms=False,
+        load_page_data=True,
+        reset=False,
     ):
         self.data_dir = data_dir
         self.name = name
@@ -175,7 +180,9 @@ class PassageData:
     def get_dir(self):
         return f"{self.data_dir}{self.name}/"
 
-    def load(self, prep2titles=False, extra_norms=False, load_page_data=True, reset=False):
+    def load(
+        self, prep2titles=False, extra_norms=False, load_page_data=True, reset=False
+    ):
         save_dir = self.get_dir()
         assert os.path.exists(save_dir)
         if reset:
@@ -230,8 +237,10 @@ class PassageData:
             logging.info(f">> Created save dir: {save_dir}")
 
         if not self.load(
-            prep2titles=prep2titles, extra_norms=extra_norms,
-            load_page_data=load_page_data, reset=reset
+            prep2titles=prep2titles,
+            extra_norms=extra_norms,
+            load_page_data=load_page_data,
+            reset=reset,
         ):
             if prep2titles:
                 self.prep2titles = defaultdict(set)
