@@ -352,6 +352,16 @@ class SidNormer:
             f"{save_dir}nsid2sids.npy", mmm="r", verbose=False
         )
         return True
+    
+    def load_to_memory(self):
+        sid2nsid_mem = self.sid2nsid.tolist()
+        self.sid2nsid = {i: s for i, s in enumerate(sid2nsid_mem)}
+        nsid2sids_mem = {}
+        for i, sidlist in enumerate(self.nsid2sids.tolist()):
+            # Get rid of padding
+            nsid2sids_mem[i] = set([s for s in sidlist if s >= 0])
+        self.nsid2sids = nsid2sids_mem
+        print(">> sid2nsid and nsid2sids loaded to memory")
 
     def initialize(self, reset=False):
         save_dir = self.get_dir()
@@ -388,7 +398,7 @@ class SidNormer:
         if self.nsid2sids is None:
             return None
         if isinstance(self.nsid2sids, dict):
-            return self.nsid2sids.get(qnn_sid, None)
+            return self.nsid2sids.get(nsid, None)
         if nsid >= self.nsid2sids.shape[0]:
             return None
         # Drop padding
