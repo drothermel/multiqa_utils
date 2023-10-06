@@ -8,7 +8,7 @@ import utils.file_utils as fu
 WORDS_TO_IGNORE_PATH = (
     "/scratch/ddr8143/repos/multiqa_utils/data_files/words_to_ignore.json"
 )
-WORDS_TO_IGNORE = set(fu.load(WORDS_TO_IGNORE_PATH))
+WORDS_TO_IGNORE = set(fu.load_file(WORDS_TO_IGNORE_PATH))
 
 GREEN_START = "\x1b[32m"
 RED_START = "\x1b[31m"

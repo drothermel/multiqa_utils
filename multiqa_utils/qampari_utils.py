@@ -285,7 +285,7 @@ def print_retrieval_data(data):
 
 def print_answer_data(
     data,
-    answer_fxn=extract_answer_text,
+    answer_fxn=lambda d: d['answer_text'],
     width=100,
 ):
     print_data_header(data, answer_fxn)

@@ -112,6 +112,16 @@ def qnn_norm(detokenizer, s):
 def unorm(text):
     return unicodedata.normalize("NFD", text)
 
+def lnorm(text):
+    return text.lower()
+
+def lunorm(text):
+    return unorm(text.lower())
+
+def prep_norm(text):
+    return text.split("(")[0]
+    
+
 
 # Used to link redirects
 def old_norm(text, link=False):

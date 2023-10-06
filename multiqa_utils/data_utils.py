@@ -2,6 +2,7 @@ import utils.file_utils as fu
 import multiqa_utils.qampari_utils as qmp
 import multiqa_utils.romqa_utils as rqa
 import multiqa_utils.quest_utils as qst
+import multiqa_utils.string_utils as su
 
 # Order matters, do not reorder!
 DATASET_UTILS = {
@@ -81,16 +82,20 @@ def get_gtentities(data_elem, data_name):
 # ---- Entity Linking Metrics ---- #
 
 # Parse elq data consistently (no accidental flips!)
-def get_elq_entoriqnn(edata):
-    return [
-        {
+def get_elq_entoriqnn(dtk, edata):
+    all_data = []
+    for ee in edata['pred_tuples_string']:
+        ee_d = {
             "ent": ee[0],
             "ori": ee[1],
-            "qnn_ent": wu.qnn_norm(ee[0]),
-            "qnn_ori": wu.qnn_norm(ee[1]),
         }
-        for ee in edata["pred_tuples_string"]
-    ]
+        if dtk is not None:
+            ee_d.update({
+                "qnn_ent": su.qnn_norm(dtk, ee[0]),
+                "qnn_ori": su.qnn_norm(dtk, ee[1]),
+            })
+        all_data.append(ee_d)
+    return all_data
 
 
 if __name__ == "__main__":

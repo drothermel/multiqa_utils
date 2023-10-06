@@ -134,6 +134,31 @@ def mapped_wiki_into_sidnormer(str_key, qnn_key, sid_normer, mapped_str2qnn):
         nsid = qnn_key.get_str2sid(qnn_str)
         sid_normer.add_sid_to_nsid(sid, nsid)
 
+def reducing__token_data(cfg):
+    files = get_all_mapped_files(get_mapped_dir(cfg))
+    #TODO: setup tokenizer
+
+    for i, f in enumerate(files):
+        ru.processed_log(i, len(files))
+        in_data = fu.load_file(f)
+        tokenized_title = tokenizer.encode(title, add_special_tokens=False)
+        tokenized_passage = tokenizer.encode(passage, add_special_tokens=False)
+
+
+
+    # for each file: dict['tokens'] is
+    # cid -> {'just_tags': tok_data, 'tags_and_links': tok_data}
+    # tok_data -> {
+    #   title_str_span: len(title)
+    #   title_tok_span: len(title_toks)
+    #   prep_title_str_span: len(prep_title)
+    #   prep_title_tok_span: len(prep_title_toks)
+    #   passage_spans: {
+    #      string: {'tok_spans': [], 'str_spans': []},
+    #   }
+    # }
+
+
 
 def reducing__pagedata_strkeys_sidsets_sidnormer(cfg, test=False):
     files = get_all_mapped_files(get_mapped_dir(cfg))
@@ -254,7 +279,7 @@ def group_ori_by_ent(
             ori2ent2cids[ori_sid_key] = {}
             ori2ent2pages[ori_sid_key] = {}
         for cid, entcount in cidentcount.items():
-            page_id = cid.split("__")[0]
+            page_id, _ = split_cid(cid)
             for ent, count in entcount.items():
                 ent_sid_key = str_key.get_str2sid(ent)
                 assert ent_sid_key is not None

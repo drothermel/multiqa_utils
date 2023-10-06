@@ -156,11 +156,13 @@ class PassageData:
         self.name = name
         self.page_data = {}
         self.title2pid = {}
+        self.pid2title = {}
         self.data_files = [
             "page_data.pkl",
             "title2pid.pkl",
         ]
         self.prep2titles = None
+        self.title2prep = None  # used if we don't want to load page data
         self.on2titles = None
         self.qn2titles = None
 
@@ -196,6 +198,8 @@ class PassageData:
         self.title2pid = fu.load_file(f"{save_dir}title2pid.pkl", verbose=False)
         if load_page_data:
             self.page_data = fu.load_file(f"{save_dir}page_data.pkl", verbose=False)
+        else:
+            self.pid2title = {v: k for k, v in self.title2pid.items()}
 
         if prep2titles:
             self.prep2titles = fu.check_exists_load(
@@ -203,6 +207,11 @@ class PassageData:
                 default=defaultdict(set),
                 verbose=False,
             )
+            if not load_page_data:
+                self.title2prep = {}
+                for prep, titles in self.prep2titles.items():
+                    for t in titles:
+                        self.title2prep[t] = prep
 
         if extra_norms:
             self.on2titles = fu.check_exists_load(
@@ -280,6 +289,8 @@ class PassageData:
         return sorted(all_cids, key=lambda c: c.chunk_num)
 
     def get_title_from_pid(self, page_id):
+        if len(self.page_data) == 0:
+            return self.pid2title[page_id]
         return self.page_data[page_id].title
 
     def get_title_from_cid(self, cid):
@@ -297,6 +308,9 @@ class PassageData:
         return self.prep2titles[prep_title]
 
     def get_prep_title_from_title(self, title):
+        if self.title2prep is not None:
+            return self.title2prep.get(title, None)
+        
         if title not in self.title2pid:
             return None
         return self.page_data[self.title2pid[title]].prep_title

@@ -425,6 +425,13 @@ RESOURCES_MAP = {
         "compressed": False,
         "desc": "Dev file for AmbigQA",
     },
+    # WebQSP data
+    'data.webqsp.full': {
+        's3_url': 'https://download.microsoft.com/download/F/5/0/F5012144-A4FB-4084-897F-CFDA99C60BDF/WebQSP.zip',
+        'original_ext': '.zip',
+        'compressed': False,
+        'desc': 'Full webqsp data, found in data/',
+    },
 }
 
 
@@ -546,6 +553,7 @@ def download(resource_key: str, out_dir: str = None):
 
 
 def main():
+    logging.basicConfig(level=logging.INFO)
     parser = argparse.ArgumentParser()
 
     parser.add_argument(
