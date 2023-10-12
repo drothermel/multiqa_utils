@@ -1,28 +1,64 @@
 import glob
+import os
+import logging
+
+import torch
+from transformers import AutoTokenizer, pipeline
 
 from utils.util_classes import Metrics
 import utils.file_utils as fu
+import utils.run_utils as ru
 import multiqa_utils.data_utils as du
 
 
+def get_dist_out_path(cfg, dataset, split, shard_ind, version):
+    out_dir = f'{cfg.download_dir}data/{dataset}/llama2_7b_output/{split}/'
+    os.makedirs(out_dir, exist_ok=True)
+    return f'{out_dir}data_pt{shard_ind}_{version}.pkl'
 
-def prepare_data_for_drive(cfg, dataset, split):
-    assert dataset == 'romqa' and split == 'dev'
-    # TODO: in_data = du.get_data(cfg, f'{dataset}_{split}')
-    in_data = fu.load_file(
-        '/scratch/ddr8143/multiqa/downloads/data/romqa/top_20.dev__idpostp.jsonl'
+
+def prompt_iter(prompt_base, dataset):
+    for qdata in dataset:
+        question = qdata['question']
+        yield f'{prompt_base}\n\nQuestion: {question}\nAnswer Type:'
+
+def get_model_name(llm_type):
+    model_map = {
+        "llama2_7b": "meta-llama/Llama-2-7b-hf",
+    }
+    return model_map[llm_type]
+
+def make_tokenizer_pipeline(model_name):
+    tokenizer = AutoTokenizer.from_pretrained(model_name, use_auth_token=True)
+    llama_pipeline = pipeline(
+        "text-generation",
+        model=model_name,
+        torch_dtype=torch.float16,
+        device_map="auto",
+        batch_size=1,
     )
-    fu.dumppkl(in_data, f'{cfg.data_download_dir}{dataset}/{split}_input_data.pkl')
-    
+    return tokenizer, llama_pipeline
 
-def load_llama2_output_data(cfg, dataset, split):
-    data_dir = f'{cfg.data_download_dir}{dataset}/llama2_7b_output/{split}/'
-    version = cfg.entity_linking.prompt_versions[dataset]
-    all_files = glob.glob(f'{data_dir}/data_pt*_{version}.pkl')
-    all_lines = []
-    for f in all_files:
-        all_lines.extend(fu.load_file(f))
-    return all_lines
+def run_pipeline(
+    pipeline,
+    tokenizer,
+    prompt_base,
+    dataset,
+):
+    logging.info(f">> Running llama2 on data: {len(dataset):,}")
+    preds = []
+    for i, out in enumerate(pipeline(
+        prompt_iter(prompt_base, dataset),
+        do_sample=False,
+        top_k=1,
+        num_return_sequences=1,
+        eos_token_id=tokenizer.eos_token_id,
+        max_length=500,
+    )):
+        ru.processed_log(i, input_size=len(dataset))
+        preds.append(out[0]['generated_text'])
+    return preds
+
 
 def get_lm_pred_from_output_prompt(output, prompt):
     plen = len(prompt)
@@ -36,8 +72,8 @@ def get_lm_pred_from_output_prompt(output, prompt):
     return pred_lines
 
 def parse_prompt_pred(prompt_type, pred_lines):
-    assert prompt_type in ['elq_prompt']
-    if prompt_type == 'elq_prompt':
+    assert prompt_type in ['el_prompt']
+    if prompt_type == 'el_prompt':
         keys = {
             'question': 'Question: ',
             'answer_type': 'Answer Type: ',
@@ -132,3 +168,18 @@ def load_parse_match_prompt_pred_data(
         
         
 
+# -------- Colab Utils ---------- #
+def prepare_data_for_drive(cfg, dataset, split):
+    assert dataset == 'romqa' and split == 'dev'
+    in_data = du.get_data(cfg, f'{dataset}_{split}')
+    fu.dumppkl(in_data, f'{cfg.data_download_dir}{dataset}/{split}_input_data.pkl')
+    
+
+def load_llama2_output_data(cfg, dataset, split):
+    data_dir = f'{cfg.data_download_dir}{dataset}/llama2_7b_output/{split}/'
+    version = cfg.entity_linking.prompt_versions[dataset]
+    all_files = glob.glob(f'{data_dir}/data_pt*_{version}.pkl')
+    all_lines = []
+    for f in all_files:
+        all_lines.extend(fu.load_file(f))
+    return all_lines

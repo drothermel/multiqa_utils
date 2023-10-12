@@ -1,35 +1,53 @@
-# ---- ID ---- #
 
+## =============================================== ##
+## =============== Info Extractors =============== ##
+## =============================================== ##
 
-def get_id(qdata):
-    return qdata["id"]
+# --------- Original Data Format Extractors ---------- #
 
-
-# ---- Question ---- #
-
+def get_original_id(qdata):
+    return qdata['id']
 
 def get_question(qdata):
-    return qdata["question"]
+    return qdata['question']
 
+def get_question_type(qdata):
+    return 'complex_multi'
 
-# ---- Answers ---- #
-def get_answer_set(qdata):
-    return set([a["text"] for a in d["complete_answer"]])
+# Notes:
+# - 51/7068 questions in RQA dev set have no answers. Explains why eval
+#   calcs recall as: len(common) / max(1, len(gold)).  These q's will
+#   always be p = r = f1 = 0.
+# - We can get the urls from the URIs if we want to by:
+# for qid in Q1061264 Q1061264 Q1061264; do 
+#    curl https://hub.toolforge.org/${qid}\?lang\=en >> output.txt;
+#    echo " ${qid}" >> output.txt; 
+# done
+# - But even more clean would be to use the TRex data that they used
+#   to construct the dataset: https://hadyelsahar.github.io/t-rex/
+# - ah, but in run_all_baselines:
+#   data = [ex for ex in data if ex['complete_answer']]
+#   so they dump the bad data points when reporting results
+def get_answer_sets(qdata):
+    all_ans = []
+    for adata in qdata['complete_answer']:
+        all_ans.append(
+            list(set([adata['text'], *adata['aliases']]))
+        )
+    possible_answer_sets = [all_ans]
+    return possible_answer_sets
 
+def get_gt_ent_sets(qdata):
+    ent_sets = set()
+    for ed in qdata['constraints']:
+        o_ent  = ed['other_ent']
+        ent_sets.add(
+            frozenset([o_ent['text'], *o_ent['aliases']])
+        )
+    return [list(fs) for fs in ent_sets]
 
-def get_answer_dict(qdata):
-    return {a["text"]: a["aliases"] for a in d["complete_answer"]}
+# Notes: Built from wikidata graph & retrieval from T-Rex not wikipedia, have
+#        dpr scored passages but not the correct passages.
+def get_proof_data(qdata, dtk):
+    return None
 
-
-# ---- Entities ---- #
-
-
-def get_gtentities(elem):
-    # Note that rqa entities are always good due to dataset construction
-    ent2urlalias = {}
-    for c in elem["constraints"]:
-        ent = c["other_ent"]["text"]
-        if ent not in ent2urlalias:
-            ent2urlalias[ent] = {"url": c["other_ent"]["uri"], "aliases": set()}
-        ent2urlalias[ent]["aliases"].update(c["other_ent"]["aliases"])
-    return ent2urlalias

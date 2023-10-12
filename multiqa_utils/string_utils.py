@@ -119,9 +119,11 @@ def lunorm(text):
     return unorm(text.lower())
 
 def prep_norm(text):
-    return text.split("(")[0]
-    
+    return text.split("(")[0].strip()
 
+# Quest proof text specific norm
+def quest_norm(text):
+    return text.replace("'''''", "'")
 
 # Used to link redirects
 def old_norm(text, link=False):

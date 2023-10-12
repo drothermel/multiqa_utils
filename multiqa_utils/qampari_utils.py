@@ -1,32 +1,65 @@
 import random
-import jsonlines
-
-import multiqa_utils.text_viz_utils as tvu
-
-DOWNLOADED_DATA_DIR = "/scratch/ddr8143/multiqa/downloads/data/qampari/"
-PROCESSED_DATA_DIR = "/scratch/ddr8143/multiqa/qampari_data/"
-DECOMP_DATA_DIR = f"{PROCESSED_DATA_DIR}decomposition_v0/"
-MANUAL_TRAIN_DECOMPOSITION_PATH = f"{DECOMP_DATA_DIR}/manual_decompositions_train.json"
-
 
 ## =============================================== ##
 ## =============== Info Extractors =============== ##
 ## =============================================== ##
 
-# Useful when working with many datasets
+# --------- Original Data Format Extractors ---------- #
 
-# ---- ID ---- #
-
-
-def get_id(qdata):
-    return qdata["qid"]
-
-
-# ---- Question ---- #
+def get_original_id(qdata):
+    return qdata['qid']
 
 
 def get_question(qdata):
-    return qdata["question_text"]
+    return qdata['question_text']
+
+def get_question_type(qdata):
+    if '_simple_' in qdata['qid']:
+        return 'simple_multi'
+    else:
+        return 'complex_multi'
+
+def get_answer_sets(qdata):
+    all_ans = []
+    for adata in qdata['answer_list']:
+        all_ans.append(
+            list(set([adata['answer_text'], *adata['aliases']]))
+        )
+    possible_answer_sets = [all_ans]
+    return possible_answer_sets
+
+# Notes:
+# - Multiple cases where the url doesn't match the ent text, ignore the url
+# - 1:1 mapping between entity_text and aliases
+def get_gt_ent_sets(qdata):
+    ent_sets = set()
+    for ed in qdata['entities']:
+        ent_sets.add(frozenset([ed['entity_text'], *ed['aliases']]))
+    return [list(fs) for fs in ent_sets]
+
+# Notes:
+# - All proofs have "found_in_url" which is of the form 
+#   "https://en.wikipedia.org/wiki/<title>" so we could search with PageData
+#   and max substring overlap instead of BM25
+# - There are some duplicate proof texts, but all the (proof_text, found_in_url)
+#   pairings are 1:1 so we can jsut deduplicate them
+# Format: [ # for each answer
+#   [{'text': ..., 'found_in_url': ...}], # unique proofs
+# ]
+def get_proof_data(qdata, dtk, with_url=False):
+    proof_data_by_answer = []
+    for adata in qdata['answer_list']:
+        if with_url:
+            dedup_proof_data = set([
+                (pd['proof_text'], pd['found_in_url']) for pd in adata['proof']
+            ])
+            proof_data_by_answer.append([
+                {'text': pd[0], 'found_in_url': pd[1]} for pd in dedup_proof_data
+            ])
+        else:
+            dedup_proof_data = set([pd['proof_text'] for pd in adata['proof']])
+            proof_data_by_answer.append(list(dedup_proof_data))
+    return proof_data_by_answer
 
 
 # ---- Answers ---- #
@@ -50,10 +83,6 @@ def get_answer_proofs(ans_dict):
     return ans_dict["proof"]
 
 
-def get_answer_set(qdata):
-    return set([a["answer_text"] for a in qdata["answer_list"]])
-
-
 def get_answer_aliases_dict(qdata):
     return {get_answer(a): get_answer_aliases(a) for a in qdata["answer_list"]}
 
@@ -69,26 +98,10 @@ def get_answer_aliases_urls_dict(qdata):
     return ans2urlalias
 
 
-# ---- Entities ---- #
-
-# Return dict for this question: {ent: (url, aliases_set)}
-def get_gtentities(qata, good_only=False):
-    ent2urlalias = {}
-    for ent_dict in elem["entities"]:
-        ent = ent_dict["entity_text"]
-        if ent not in ent2urlalias:
-            ent_url = ent_dict["entity_url"] if "entity_url" in ent_dict else None
-            if good_only and ent_url is None:
-                continue
-            ent2urlalias[ent] = {"url": ent_url, "aliases": set()}
-        ent2urlalias[ent]["aliases"].update([a for a in ent_dict["aliases"]])
-    return ent2urlalias
-
-
 # ---- Proof Data ---- #
 
 
-def get_proof_data(qdata):
+def get_proof_data_old(qdata):
     # Include info about all answers to the question
     # for each proof
     ans2urlalias = get_answer_aliases_urls_dict(qdata)
@@ -245,7 +258,8 @@ def qmp_data_to_dpr_format(qmp_data):
 ## ========== QMP Specific Viz Utils ============= ##
 ## =============================================== ##
 
-
+# TODO: Clearly this import method isn't good if we're going to use this.
+# so fix if we decide to use this
 def get_elem_keylist(d, elem_keys):
     for k in elem_keys:
         if k in d:
@@ -254,6 +268,7 @@ def get_elem_keylist(d, elem_keys):
 
 
 def print_data_header(data, answer_fxn=lambda k: k):
+    import multiqa_utils.text_viz_utils as tvu
     question = get_elem_keylist(data, ["question", "question_text"])
     answers = [
         answer_fxn(a) for a in get_elem_keylist(data, ["answers", "answer_list"])
@@ -269,6 +284,7 @@ def print_data_header(data, answer_fxn=lambda k: k):
 
 
 def print_retrieval_data(data):
+    import multiqa_utils.text_viz_utils as tvu
     print_data_header(data)
     for k, v in {
         "Len pos contexts": len(data["positive_ctxs"]),
@@ -288,6 +304,7 @@ def print_answer_data(
     answer_fxn=lambda d: d['answer_text'],
     width=100,
 ):
+    import multiqa_utils.text_viz_utils as tvu
     print_data_header(data, answer_fxn)
     answers = data["answer_list"]
     print()
