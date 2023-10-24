@@ -41,6 +41,9 @@ def get_default_args(
     if split_num != -1:
         save_preds_dir += f"{split_num}/"
 
+    if not os.path.exists(save_preds_dir):
+        os.makedirs(save_preds_dir)
+
     config = {
         "interactive": False,
         "biencoder_model": models_path + "elq_wiki_large.bin",
@@ -279,7 +282,7 @@ def _load_biencoder_outs(save_preds_dir):
     mention_scores = np.load(
         os.path.join(save_preds_dir, "biencoder_mention_scores.npy"), allow_pickle=True
     )
-    runtime = float(open(os.path.join(args.save_preds_dir, "runtime.txt")).read())
+    runtime = float(open(os.path.join(save_preds_dir, "runtime.txt")).read())
     return nns, dists, pred_mention_bounds, cand_scores, mention_scores, runtime
 
 
@@ -519,13 +522,10 @@ def _get_predictions(
     num_gold_from_input_window = 0
     all_entity_preds = []
 
-    f = errors_f = None
+    out_file = None
     if getattr(args, "save_preds_dir", None) is not None:
         save_biencoder_file = os.path.join(args.save_preds_dir, "biencoder_outs.jsonl")
-        f = open(save_biencoder_file, "w")
-        errors_f = open(
-            os.path.join(args.save_preds_dir, "biencoder_errors.jsonl"), "w"
-        )
+        out_file = open(save_biencoder_file, "a+")
 
     # nns (List[Array[int]]) [(num_pred_mentions, cands_per_mention) x exs])
     # dists (List[Array[float]]) [(num_pred_mentions, cands_per_mention) x exs])
@@ -633,12 +633,11 @@ def _get_predictions(
             )
 
             all_entity_preds.append(entity_results)
-            if f is not None:
-                f.write(json.dumps(entity_results) + "\n")
+            if out_file is not None:
+                out_file.write(json.dumps(entity_results) + "\n")
 
-    if f is not None:
-        f.close()
-        errors_f.close()
+    if out_file is not None:
+        out_file.close()
     return (
         all_entity_preds,
         num_correct_weak,
@@ -682,28 +681,15 @@ def run_elq(
     stopping_condition = True
     # Prepare the data for biencoder
 
+    # Original fxnality below, but since we're not careful to update the
+    # biencoder outputs then lets disable caching for now.
+    """
     # Part 1: run biencoder if predictions not saved, otherwise load preds
     if not getattr(args, "save_preds_dir", None) or not os.path.exists(
         os.path.join(args.save_preds_dir, "biencoder_mention_bounds.npy")
     ):
-        logging.info(">> Running biencoder")
-        start_time = time.time()
-        nns, dists, pred_mention_bounds, mention_scores, cand_scores = _run_biencoder(
-            args,
-            biencoder,
-            dataloader,
-            candidate_encoding,
-            samples=samples,
-            num_cand_mentions=args.num_cand_mentions,
-            num_cand_entities=args.num_cand_entities,
-            device="cpu" if biencoder_params["no_cuda"] else "cuda",
-            threshold=mention_threshold,
-            indexer=indexer,
-        )
-        end_time = time.time()
-        logging.info(">> Finished running biencoder")
-
-        runtime = end_time - start_time
+        # The stuff we're doing below
+        # Then save
         if getattr(args, "save_preds_dir", None):
             _save_biencoder_outs(
                 args.save_preds_dir,
@@ -723,6 +709,26 @@ def run_elq(
             mention_scores,
             runtime,
         ) = _load_biencoder_outs(args.save_preds_dir)
+    """
+    assert getattr(args, "save_preds_dir", None) is not None
+    logging.info(">> Running biencoder")
+    start_time = time.time()
+    nns, dists, pred_mention_bounds, mention_scores, cand_scores = _run_biencoder(
+        args,
+        biencoder,
+        dataloader,
+        candidate_encoding,
+        samples=samples,
+        num_cand_mentions=args.num_cand_mentions,
+        num_cand_entities=args.num_cand_entities,
+        device="cpu" if biencoder_params["no_cuda"] else "cuda",
+        threshold=mention_threshold,
+        indexer=indexer,
+    )
+    end_time = time.time()
+    logging.info(">> Finished running biencoder")
+
+    runtime = end_time - start_time
 
     assert (
         len(samples)

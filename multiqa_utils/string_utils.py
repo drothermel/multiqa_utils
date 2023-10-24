@@ -48,6 +48,11 @@ def longest_common_substring(x: str, y: str) -> (int, int, int):
 
 # ---------- Normalization Utils ----------- #
 
+def apply_norms(ori_str, norm_fxns):
+    normed_str = ori_str
+    for nf in norm_fxns:
+        normed_str = nf(normed_str)
+    return normed_str
 
 def get_detokenizer():
     return MosesDetokenizer(lang="en")

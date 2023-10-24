@@ -84,8 +84,9 @@ def bm25_batch_query_dump(
 
 if __name__ == "__main__":
     print("Loading")
-    path_args = fu.current_default_path_args()
-    qmp_dev = fu.get_data(path_args, "qmp_dev")
+    hyd.initialize(version_base=None, config_path="../scripts/conf")
+    cfg = hyd.compose(config_name="maqa")
+    qmp_dev = du.get_data(cfg, "qmp_dev")
 
     print("Preprocessing")
     test_qd = [qd for i, qd in enumerate(qmp_dev) if i < 10]

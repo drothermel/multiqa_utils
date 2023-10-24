@@ -57,19 +57,18 @@ def postprocess_wikipedia_segment_to_page_index(infile, outfile, verbose=True):
 
 
 def get_graph_data_path(cfg, graph_type, data_type):
-    assert graph_type in cfg.graph_types
-    assert data_type in cfg.graphs
+    assert graph_type in cfg.wiki_processing.graph_types
+    assert data_type in cfg.wiki_processing.graphs
     return f"{cfg.postp_dir}{graph_type}__{data_type}.pkl"
 
 
 def get_set_data_path(cfg, data_type):
-    assert data_type in cfg.sets
-    return f"{cfg.postp_dir}{data_type}_set.pkl"
+    return cfg.wiki_processing[data_type]
 
 
 def get_ori2entdetailed_path(cfg, graph_type, str_ent_type):
-    assert graph_type in cfg.graph_types
-    assert str_ent_type in cfg.str_ent_types
+    assert graph_type in cfg.wiki_processing.graph_types
+    assert str_ent_type in cfg.wiki_processing.str_ent_types
     return f"{cfg.postp_dir}{graph_type}__ori2entdetailed_{str_ent_type}.pkl"
 
 

@@ -133,11 +133,13 @@ class StringKey:
 
     def get_sid2str(self, sid):
         assert self.sid2str is not None
+        if sid >= self.sid2str.shape[0]:
+            return None
         return self.sid2str[sid]
 
     def get_str2sid(self, st):
         assert self.str2sid is not None
-        if st not in self.str2sid:
+        if st is None or st not in self.str2sid:
             return None
         return self.str2sid[st]
 
@@ -390,6 +392,8 @@ class SidNormer:
         self.sid2nsid[sid] = nsid
 
     def save(self, force=False):
+        if not force:
+            logging.info(">> If you really want to do this, call with force=True")
         save_dir = self.get_dir()
         sid2nsid_array = dict_to_1d_npy_array(self.sid2nsid, dtype=np.int64)
         nsid2sids_array = dict_to_2d_npy_array(
@@ -418,3 +422,14 @@ class SidNormer:
         # Drop padding
         all_sids = set([s for s in self.nsid2sids[nsid] if s >= 0])
         return all_sids
+
+    def get_sids2nsids(self, sids):
+        all_nsids = set()
+        missing_sids = set()
+        for sid in sids:
+            nsid = self.get_sid2nsid(sid)
+            if nsid is None:
+                missing_sids.add(sid)
+            else:
+                all_nsids.add(nsid)
+        return all_nsids, missing_sids
