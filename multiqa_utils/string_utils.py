@@ -48,11 +48,13 @@ def longest_common_substring(x: str, y: str) -> (int, int, int):
 
 # ---------- Normalization Utils ----------- #
 
+
 def apply_norms(ori_str, norm_fxns):
     normed_str = ori_str
     for nf in norm_fxns:
         normed_str = nf(normed_str)
     return normed_str
+
 
 def get_detokenizer():
     return MosesDetokenizer(lang="en")
@@ -111,27 +113,46 @@ def qmp_norm(s):
 
 # My current best guess at the full normalization applied by qampari
 def qnn_norm(detokenizer, s):
+    if s is None or s == "":
+        return s
     return qmp_norm(normalize(detokenizer, s))
 
 
 def unorm(text):
+    if text is None or text == "":
+        return text
     return unicodedata.normalize("NFD", text)
 
+
 def lnorm(text):
+    if text is None or text == "":
+        return text
     return text.lower()
 
+
 def lunorm(text):
+    if text is None or text == "":
+        return text
     return unorm(text.lower())
 
+
 def prep_norm(text):
+    if text is None or text == "":
+        return text
     return text.split("(")[0].strip()
+
 
 # Quest proof text specific norm
 def quest_norm(text):
+    if text is None or text == "":
+        return text
     return text.replace("'''''", "'")
+
 
 # Used to link redirects
 def old_norm(text, link=False):
+    if text is None or text == "":
+        return text
     if link:
         text = urllib.parse.unquote(text)
     text = unicodedata.normalize("NFD", text).lower().replace(" ", "_")

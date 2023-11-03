@@ -1,20 +1,20 @@
-## Note that thises all might be wrong, or correct, def don't just assume they work!
-from collections import defaultdict
 import numpy as np
-
 import matplotlib.pyplot as plt
 
-import multiqa_utils.string_utils as tu
+from utils.util_classes import Metrics
+import multiqa_utils.string_utils as su
+
+
+# --------- Building Blocks ----------- #
+
 
 def plot_pr_data(p, r, t, nc, box=True, psize=5):
     if box:
         fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(
-            2, 2, figsize=(2*psize, 2*psize)
+            2, 2, figsize=(2 * psize, 2 * psize)
         )
     else:
-        fig, (ax1, ax2, ax3, ax4) = plt.subplots(
-            1, 4, figsize=(4*psize, 1 * psize)
-        )
+        fig, (ax1, ax2, ax3, ax4) = plt.subplots(1, 4, figsize=(4 * psize, 1 * psize))
     fig.suptitle("Horizontally stacked subplots")
     ax1.plot(r, p, "-o")
     ax1.set_xlabel("recall")
@@ -29,32 +29,220 @@ def plot_pr_data(p, r, t, nc, box=True, psize=5):
     ax4.set_xlabel("threshold")
     ax4.set_ylabel("num_cands")
 
+
+def add_accuracy_metrics(
+    recalls,
+    precisions,
+    f1s,
+    metrics=None,
+    prefix='',
+):
+    if prefix != '':
+        prefix += '_'
+    if metrics is None:
+        metrics = Metrics()
+
+    perf_precision = [float(v == 1.0) for v in precisions]
+    perf_recall = [float(v == 1.0) for v in recalls]
+    perf_f1 = [float(v == 1.0) for v in f1s]
+    metrics.increment_val(
+        f'{prefix}avg_perfect_recall', sum(perf_precision) / len(perf_precision)
+    )
+    metrics.increment_val(
+        f'{prefix}avg_perfect_precision', sum(perf_recall) / len(perf_recall)
+    )
+    metrics.increment_val(f'{prefix}avg_exact_correct', sum(perf_f1) / len(perf_f1))
+    return metrics
+
+
+def calc_precision(num_preds, num_preds_in_gt):
+    if num_preds == 0:
+        return 0.0
+    return num_preds_in_gt * 1.0 / num_preds
+
+
+# This shouldn't really happen, but will in Romqa depending on how you
+# load the data.
+def calc_recall(num_gt_ans, gt_inds_found):
+    if num_gt_ans == 0:
+        return 1.0
+    return len(gt_inds_found) * 1.0 / num_gt_ans
+
+
+def calc_f1(precision, recall):
+    if (precision == 0.0 and recall == 0.0) or precision <= 0.0 or recall <= 0.0:
+        return 0.0
+    return 2 * precision * recall / (precision + recall)
+
+
 def calc_precision_recall_f1_nc_simple(
     num_preds,
     num_gt_ans,
     num_preds_in_gt,
     gt_inds_found,
-    num_scores_above_thr,
+    metrics=None,
+    prefix=None,
+    per=None,
 ):
-    if len(preds_w_scores) == 0:
-        precision = 0.0
-    else:
-        precision = num_preds_in_gt * 1.0 / num_preds
+    results = {}
+    results['precision'] = calc_precision(num_preds, num_preds_in_gt)
+    results['recall'] = calc_recall(num_gt_ans, gt_inds_found)
+    results['f1'] = calc_f1(results['precision'], results['recall'])
+    results['num_cands'] = num_preds
 
-    if len(gt_ans_sets_list) == 0:
-        recall = 1.0
-    else:
-        recall = len(gt_inds_found) * 1.0 / num_gt_ans
+    # Return results for a single element
+    if metrics is None:
+        return results
 
-    f1 = 2 * precision * recall / (precision + recall)
-    num_cands = num_scores_above_thr
-    return precision, recall, f1, num_cands
-    
+    # Add results to lists when calculating across a dataset
+    pref = '' if prefix is None else f'{prefix}_'
+    for k, v in results.items():
+        metrics.add_to_lists_per(f'{pref}{k}', per, v)
+    return metrics
 
 
-# For a single question:
-# - list of gt answers, alias set for each
-# - list or predictions [(pred_str, score), ...]
+# Per-question function
+# Inputs:
+#   gt_sets_list - [{ans_1_alias_1, ans_1_alias_2}, {ans_2_alias_1}, ...]
+#   preds_list - either [pred, ...] or [(pred, ..), ..]
+#                returns the normed_preds only in the same order
+#
+# Return normed_gt_sets_list, normed_preds_list, norm_cache
+#   with norms applied or not according to flags.
+def elem_apply_norms_to_preds_gt(
+    gt_sets_list,
+    preds_list,
+    norm_fxns=[],
+    apply_to_gt=True,
+    apply_to_pred=True,
+    norm_cache={},
+):
+    normed_gt_sets_list = gt_sets_list
+    if len(norm_fxns) > 0 and apply_to_gt:
+        normed_gt_sets_list = []
+        for gt_set in gt_sets_list:
+            normed_gt_set = set()
+            for gt_ans in gt_set:
+                if gt_ans in norm_cache:
+                    norm_gt_ans = norm_cache[gt_ans]
+                else:
+                    norm_gt_ans = su.apply_norms(gt_ans, norm_fxns)
+                    norm_cache[gt_ans] = norm_gt_ans
+                normed_gt_set.add(norm_gt_ans)
+            normed_gt_sets_list.append(normed_gt_set)
+
+    normed_preds_list = preds_list
+    if len(norm_fxns) > 0 and apply_to_pred:
+        normed_preds_list = []
+        for pred_or_pred_tuple in preds_list:
+            # Note pred might be "pred" or ("pred", "score", ...)
+            pred = pred_or_pred_tuple
+            if isinstance(pred_or_pred_tuple, tuple):
+                pred = pred_or_pred_tuple[0]
+
+            if pred in norm_cache:
+                norm_pred = norm_cache[pred]
+            else:
+                norm_pred = su.apply_norms(pred, norm_fxns)
+                norm_cache[pred] = norm_pred
+            normed_preds_list.append(norm_pred)
+
+    return normed_gt_sets_list, normed_preds_list, norm_cache
+
+
+# --------- PR Calcs Without Scores ----------- #
+
+# Per-question function
+# Inputs:
+#   gt_ans_sets_list - [{ans_1_alias_1, ans_1_alias_2}, {ans_2_alias_1}, ...]
+#   preds_list - either [pred, ...]
+#
+# Return metrics_dict (either dict or Metrics) and norm_cache
+def elem_calc_precision_recall_f1_no_scores(
+    gt_sets_list,
+    preds_list,
+    norm_fxns=[],
+    apply_to_gt=True,
+    apply_to_pred=True,
+    norm_cache=dict(),
+    metrics=None,
+    prefix=None,
+    per=None,
+):
+    # First get the normed verisons
+    (normed_gt_sets_list, normed_preds_list, norm_cache) = elem_apply_norms_to_preds_gt(
+        gt_sets_list,
+        preds_list,
+        norm_fxns=norm_fxns,
+        apply_to_gt=apply_to_gt,
+        apply_to_pred=apply_to_pred,
+        norm_cache=norm_cache,
+    )
+
+    # Then calculate the stats
+    num_preds = len(preds_list)
+    num_gt_ans = len(gt_sets_list)
+    num_preds_in_gt = 0
+    gt_inds_found = set()
+    for pred_ind, pred in enumerate(preds_list):
+        normed_pred = normed_preds_list[pred_ind]
+        pred_in_gt = False
+        for gt_ind, gt_ans_set in enumerate(normed_gt_sets_list):
+            if normed_pred in gt_ans_set:
+                gt_inds_found.add(gt_ind)
+                pred_in_gt = True
+
+        if pred_in_gt:
+            num_preds_in_gt += 1
+
+    results = calc_precision_recall_f1_nc_simple(
+        num_preds,
+        num_gt_ans,
+        num_preds_in_gt,
+        gt_inds_found,
+        metrics=metrics,
+        prefix=prefix,
+        per=per,
+    )
+    return results, norm_cache
+
+
+def dataset_calc_precision_recall_f1_no_scores(
+    gt_sets_list_of_lists,
+    preds_list_of_lists,
+    norm_fxns=[],
+    apply_to_gt=True,
+    apply_to_pred=True,
+    norm_cache={},
+    metrics=None,
+    prefix=None,
+    per=None,
+):
+    if metrics is None:
+        metrics = Metrics()
+
+    for q_ind, gt_sets_list in enumerate(gt_sets_list_of_lists):
+        metrics, norm_cache = elem_calc_precision_recall_f1_no_scores(
+            gt_sets_list,
+            preds_list_of_lists[q_ind],
+            norm_fxns=norm_fxns,
+            apply_to_gt=apply_to_gt,
+            apply_to_pred=apply_to_pred,
+            norm_cache=norm_cache,
+            metrics=metrics,
+            prefix=prefix,
+            per=per,
+        )
+    return metrics, norm_cache
+
+
+# --------- PR Calcs With Scores ----------- #
+
+# Per-question function
+# Inputs:
+#   gt_sets_list - [{ans_1_alias_1, ans_1_alias_2}, {ans_2_alias_1}, ...]
+#   preds_w_scores_list - either [(pred, score), ..]
+#
 # Return: [(pred_str, score, set(matching_ans_inds)), ...]
 def elem_gtset_predscores_add_matchans(
     gt_sets_list,
@@ -66,37 +254,26 @@ def elem_gtset_predscores_add_matchans(
 ):
     pred_score_matchans = []
 
-    # Normalize gt if required
-    normed_gt_sets = gt_sets_list
-    if len(norm_fxns) > 0 and apply_to_gt:
-        normed_gt_sets = []
-        for gt_set in gt_sets_list:
-            normed_gt_sets.append(set())
-            for gt_ans in gt_set:
-                if gt_ans in norm_cache:
-                    normed_ans = norm_cache[gt_ans]
-                else:
-                    normed_ans = su.apply_norms(gt_ans, norm_fxns)
-                    norm_cache[gt_ans] = normed_ans
-                normed_gt_sets[-1].add(normed_ans)
-
-    # Add normalize preds to norm_cache if required
-    if len(norm_fxns) > 0 and apply_to_pred:
-        for pred, score in preds_w_scores_list:
-            if pred in not norm_cache:
-                normed_pred = su.apply_norms(pred, norm_fxns)
-                norm_cache[pred] = normed_pred
+    # First get the appropriately normed lists
+    (normed_gt_sets_list, normed_preds_list, norm_cache) = elem_apply_norms_to_preds_gt(
+        gt_sets_list,
+        preds_w_scores_list,
+        norm_fxns,
+        apply_to_gt,
+        apply_to_pred,
+        norm_cache,
+    )
 
     # Then get all matches between preds and gt
-    for pred, score in preds_w_scores_list:
-        normed_pred = norm_cache[pred]
+    for pred_i, (pred, score) in enumerate(preds_w_scores_list):
+        normed_pred = normed_preds_list[pred_i]  # will obey apply_to_pred
         matching_gt_inds = set()
-        for gt_ind, gt_alias_set in enumerate(normed_gt_sets):
+        for gt_ind, gt_alias_set in enumerate(normed_gt_sets_list):
             if normed_pred in gt_alias_set:
                 matching_gt_inds.add(gt_ind)
         pred_score_matchans.append((pred, score, matching_gt_inds))
     return pred_score_matchans, norm_cache
-        
+
 
 # For a full datasets
 # Inputs:
@@ -122,7 +299,7 @@ def dataset_gtset_predscores_add_matchans(
 ):
     norm_cache = {}
     pred_score_matchans_list_of_lists = []
-    for i in range(len(gt_sets_list)):
+    for i in range(len(gt_sets_list_of_lists)):
         pred_score_matchans_list, norm_cache = elem_gtset_predscores_add_matchans(
             gt_sets_list_of_lists[i],
             preds_w_scores_list_of_lists[i],
@@ -131,9 +308,7 @@ def dataset_gtset_predscores_add_matchans(
             apply_to_pred,
             norm_cache,
         )
-        pred_score_matchans_list_of_lists.append(
-            pred_score_matchans_list
-        )
+        pred_score_matchans_list_of_lists.append(pred_score_matchans_list)
     return pred_score_matchans_list_of_lists
 
 
@@ -144,34 +319,31 @@ def elem_pr_curve_linspace(
     num_gt_ans,
     num_samples=100,
     thr_range=None,
+    metrics=None,
+    prefix=None,
+    per=None,
 ):
     # Sort in preparation for PR curve calc and get thr_range
-    num_preds = len(pred_score_matchans)
-    rev_sort_psm = sorted(
-        pred_score_matchans, reverse=True, key=lambda pr, sc, ma: sc
-    )
+    rev_sort_psm = sorted(pred_score_matchans, reverse=True, key=lambda pr, sc, ma: sc)
     eps = 0.00001
     max_thr = rev_sort_psm[0][1] + eps if thr_range is None else thr_range[1]
     min_thr = rev_sort_psm[-1][1] - eps if thr_range is None else thr_range[0]
 
     thrs = np.linspace(max_thr, min_thr, num_samples)
     thr_ind = 0
-    precisions = []
-    recalls = []
-    f1s = []
-    num_cands = []
+
+    # Record the stats in a Metrics
+    if metrics is None:
+        metrics = Metrics()
+    stats_to_calc = ['precision', 'recall', 'f1', 'num_cands']
+    key_names = [metrics.get_val_name(k, per=per, prefix=prefix) for k in stats_to_calc]
 
     # If the max_thr > max_score:
     #     -> nothing is predicted for first thr
-    #     recall = 0, nothing predicted
-    #     precision = 0, nothing predicted
-    #     nc = 0, nothing predicted
-    # However, if max_thr <= max_score, this isn't true
+    #     -> all stats are 0.0
     if max_thr > rev_sort_psm[0][1]:
-        precisions.append(0.0)
-        recalls.append(0.0)
-        f1s.append(0.0)
-        num_cands.append(0.0)
+        for key in key_names:
+            metrics.add_to_lists_per(key, per, 0.0)
         thr_ind = 1
 
     num_preds_in_gt = 0
@@ -181,18 +353,18 @@ def elem_pr_curve_linspace(
         # If the score is less than the threshold, record precision
         # recall and num_cands for this threshold and update threshold
         if sc < thrs[thr_ind]:
-            pr, rc, f1, nc = calc_precision_recall_f1_nc_simple(
-                num_preds,
+            metrics = calc_precision_recall_f1_nc_simple(
+                num_scores_above_thr,
                 num_gt_ans,
                 num_preds_in_gt,
                 gt_inds_found,
-                num_scores_above_thr,
+                metrics=metrics,
+                prefix=prefix,
+                per=per,
             )
             while sc < thrs[thr_ind]:
-                precisions.append(pr)
-                recalls.append(rc)
-                f1s.append(f1)
-                num_cands.append(nc)
+                for key in key_names:
+                    metrics.repeat_prev_lists_per(key, per)
                 thr_ind += 1
                 if thr_ind >= len(thrs):
                     break
@@ -213,19 +385,15 @@ def elem_pr_curve_linspace(
     # Now that all the predictions have been predicted at the current thr_ind
     # we need to keep the same prfn for the rest of the thresholds
     while thr_ind < len(thrs):
-        precisions.append(precisions[-1])
-        recalls.append(recalls[-1])
-        f1s.append(f1s[-1])
-        num_cands.append(num_cands[-1])
+        for key in key_names:
+            metrics.repeat_prev_lists_per(key, per)
         thr_ind += 1
 
-    return {
-        'thresholds': thrs,
-        'precisions': precisions,
-        'recalls': recalls,
-        'f1s': f1s,
-        'num_cands': num_cands,
-    }
+    # Add thresholds to the metrics
+    thr_name = metrics.get_val_name('thresholds', prefix=prefix)
+    metrics.lists_per[(thr_name, per)] = thrs
+
+    return metrics
 
 
 # Inputs:
@@ -245,6 +413,9 @@ def dataset_pr_curve_linspace(
     apply_to_gt=True,
     apply_to_pred=True,
     thr_range=None,
+    metrics=None,
+    prefix=None,
+    per=None,
 ):
     # First conver the scores and gt_ans into list of
     # pred_score_matchans and num_gt_ans
@@ -265,7 +436,7 @@ def dataset_pr_curve_linspace(
     else:
         min_thr = None
         max_trh = None
-        for pws_list in preds_w_scores_list_of_list:
+        for pws_list in preds_w_scores_list_of_lists:
             mins = min([ps[1] for ps in pws_list]) - eps
             maxs = max([ps[1] for ps in pws_list]) + eps
             if min_thr is None or min_thr > mins:
@@ -273,25 +444,35 @@ def dataset_pr_curve_linspace(
             if max_trh is None or max_thr < maxs:
                 max_thr = maxs
 
+    # Setup the metrics to record the values and count
+    if metrics is None:
+        metrics = Metrics()
+    stats_to_calc = ['precision', 'recall', 'f1', 'num_cands']
+    key_names = [metrics.get_val_name(k, per=per, prefix=prefix) for k in stats_to_calc]
+    count_key = metrics.get_val_name('count', per, prefix=prefix)
+    metrics.increment_val(count_key)
+
     # Then iterate through getting the linspaced values
-    avg_values = {}
-    count = 0
     for i in range(len(num_gt_ans)):
-        res = elem_pr_curve_linspace(
+        metrics = elem_pr_curve_linspace(
             pred_score_matchans_list_of_lists[i],
             num_gt_ans[i],
             num_samples=num_samples,
             thr_range=[min_thr, max_thr],
+            metrics=metrics,
+            prefix=prefix,
+            per=per,
         )
-        for k, v in res.items():
-            varr = np.array(v)
-            count += 1
-            if k not in avg_values:
-                avg_values[k] = varr
-            else:
-                avg_values[k] += varr
-    return {k: varr / count for k, varr in avg_values.items()}
+        metrics.increment_val(count_key)
 
+        # Either initialize the relevant array or sum into it
+        for key in key_names:
+            metrics.convert_list_to_array(key, per)
+
+    # Normalize the sum arrays by the count
+    for key in key_names:
+        metrics.norm_arrays_per(key, per, metrics.vals[count_key])
+    return metrics
 
 
 """
@@ -455,27 +636,12 @@ def avg_qdata_pr_curves(scoring_data, num_samples):
             allr = allr + np.array(r)
             allt = allt + np.array(t)
             allnc = allnc + np.array(nc)
+    max_recall = allr[-1] *100.0 / count
+    ncands = int(allnc[-1] / count)
     print(
-        f">> Max recall: {allr[-1] *100.0 / count:0.4f}% with {int(allnc[-1] / count):,} cands"
+        f">> Max recall: {max_recall:0.4f}% with {ncands:,} cands"
     )
     return allp / count, allr / count, allt / count, allnc / count
-
-
-def plot_pr_data(p, r, t, nc):
-    fig, (ax1, ax2, ax3, ax4) = plt.subplots(1, 4, figsize=(20, 10))
-    fig.suptitle("Horizontally stacked subplots")
-    ax1.plot(r, p, "-o")
-    ax1.set_xlabel("recall")
-    ax1.set_ylabel("precision")
-    ax2.plot(t, r, "-o")
-    ax2.set_xlabel("threshold")
-    ax2.set_ylabel("recall")
-    ax3.plot(t, p, "-o")
-    ax3.set_xlabel("threshold")
-    ax3.set_ylabel("precision")
-    ax4.plot(t, nc, "-o")
-    ax4.set_xlabel("threshold")
-    ax4.set_ylabel("num_cands")
 
 
 def plot_pr_data_together(
@@ -492,7 +658,9 @@ def plot_pr_data_together(
     gptavgnc,
 ):
     fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(10, 10))
-    # fig.suptitle("Comparison of Precision/Recall Values for Different Scoring Methods")
+    # fig.suptitle(
+    #   "Comparison of Precision/Recall Values for Different Scoring Methods"
+    # )
     for i, p in enumerate(plist):
         ax1.plot(rlist[i], p, "-", label=labels[i])
         ax2.plot(tlist[i], rlist[i], "-", label=labels[i])
