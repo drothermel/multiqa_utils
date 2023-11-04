@@ -7,11 +7,12 @@ import re
 import multiprocessing
 import html
 
+from utils.util_classes import Metrics
 import utils.file_utils as fu
 import utils.run_utils as ru
+from multiqa_utils.helper_classes import StringKey, PassageData, SidNormer, Ori2Ent
 import multiqa_utils.dpr_tokenizer_utils as tu
 import multiqa_utils.string_utils as su
-from multiqa_utils.helper_classes import StringKey, PassageData, SidNormer, Ori2Ent
 
 # ##################################
 # #    Process New Wikidump       ##
@@ -63,8 +64,16 @@ def get_graph_data_path(cfg, graph_type, data_type):
     return f"{cfg.postp_dir}{graph_type}__{data_type}.pkl"
 
 
-def get_set_data_path(cfg, data_type):
-    return cfg.wiki_processing[data_type]
+def get_set_data_path(cfg, graph_type, set_type):
+    assert graph_type in cfg.wiki_processing.graph_types
+    assert set_type in cfg.wiki_processing.sets
+    return f"{cfg.postp_dir}{graph_type}__{set_type}_set.pkl"
+
+
+def get_norm2sids_path(cfg, graph_type, norm_type):
+    assert graph_type in cfg.wiki_processing.graph_types
+    assert norm_type in cfg.wiki_processing.norm_types
+    return f"{cfg.postp_dir}{graph_type}__{norm_type}_norm2sids.pkl"
 
 
 def get_ori2entdetailed_path(cfg, graph_type, str_ent_type):
@@ -73,12 +82,31 @@ def get_ori2entdetailed_path(cfg, graph_type, str_ent_type):
     return f"{cfg.postp_dir}{graph_type}__ori2entdetailed_{str_ent_type}.pkl"
 
 
-def get_mapped_file(mapped_dir, input_name):
-    return f"{mapped_dir}{input_name}_mapped.pkl"
+def get_mapped_file(cfg, input_name):
+    mapped_dir = cfg.wiki_processing.wiki_mapped_dir
+    return f"{mapped_dir}{input_name}_parsed.pkl"
 
 
-def get_all_mapped_files(mapped_dir):
-    return sorted(glob.glob(get_mapped_file(mapped_dir, "*")))
+def get_all_mapped_files(cfg):
+    return sorted(glob.glob(get_mapped_file(cfg, "*")))
+
+
+# # ---- Loaders ---- # #
+
+
+def load_sid_sets(cfg, graph_types=None, set_types=None):
+    if graph_types is None or len(graph_types) == 0:
+        graph_types = cfg.wiki_processing.graph_types
+    if set_types is None or len(set_types) == 0:
+        set_types = cfg.wiki_processing.sets
+
+    sid_sets = {}
+    for graph_t in graph_types:
+        sid_sets[graph_t] = {}
+        for set_t in set_types:
+            set_path = get_norm2sids_path(cfg, graph_t, set_t)
+            sid_sets[graph_t][set_t] = fu.load_file(set_path)
+    return sid_sets
 
 
 # # ---- Key Parsing ---- # #
@@ -116,16 +144,27 @@ def mapped_wiki_into_qnnstrkey(qnn_str_key, mapped_str2qnn):
         qnn_str_key.add_str(qnn_str)
 
 
-def mapped_wiki_into_strkey_and_sidsets(str_key, sid_sets, mapped_sets):
+def mapped_wiki_into_strkey(str_key, mapped_sets):
     # Note we're using tags and links only because it is a superset of the
     # strings that appear in each graph
     tnl_sets = mapped_sets["graph_data_tags_and_links"]
     for set_name, str_set in tnl_sets.items():
-        if set_name not in sid_sets:
-            sid_sets[set_name] = set()
         for s in str_set:
-            sid = str_key.add_str(s)
-            sid_sets[set_name].add(sid)
+            str_key.add_str(s)
+
+
+def mapped_wiki_into_sidsets(cfg, str_key, sid_sets, mapped_sets):
+    # Note we're using tags and links only because it is a superset of the
+    # strings that appear in each graph
+    for graph_type, graph_sets in mapped_sets.items():
+        if graph_type not in sid_sets:
+            sid_sets[graph_type] = {}
+        for set_name, str_set in graph_sets.items():
+            if set_name not in sid_sets[graph_type]:
+                sid_sets[graph_type][set_name] = set()
+            for st in str_set:
+                sid = str_key.get_str2sid(st)
+                sid_sets[graph_type][set_name].add(sid)
 
 
 def mapped_wiki_into_sidnormer(str_key, qnn_key, sid_normer, mapped_str2qnn):
@@ -136,15 +175,10 @@ def mapped_wiki_into_sidnormer(str_key, qnn_key, sid_normer, mapped_str2qnn):
 
 
 # TODO: Implement
-def get_mapped_dir(cfg):
-    assert False
-
-
-# TODO: Implement
 def reducing__token_data(cfg):
     assert False
     """
-    files = get_all_mapped_files(get_mapped_dir(cfg))
+    files = get_all_mapped_files(cfg)
     # TODO: setup tokenizer
     tokenizer = None
 
@@ -171,7 +205,7 @@ def reducing__token_data(cfg):
 
 
 def reducing__pagedata_strkeys_sidsets_sidnormer(cfg, test=False):
-    files = get_all_mapped_files(get_mapped_dir(cfg))
+    files = get_all_mapped_files(cfg)
     files = files[:3] if test else files
 
     # Initialize to build these from scratch
@@ -185,7 +219,6 @@ def reducing__pagedata_strkeys_sidsets_sidnormer(cfg, test=False):
         reset=True,
     )
     sid_normer = SidNormer(cfg.sid_normer.dir, cfg.sid_normer.name, reset=True)
-    sid_sets = {}
 
     # Iterate through mapped files adding to data classes
     for i, f in enumerate(files):
@@ -194,15 +227,12 @@ def reducing__pagedata_strkeys_sidsets_sidnormer(cfg, test=False):
         # Note order matters, make keys then use them for str -> sid only
         mapped_wiki_into_passage_data(passage_data, in_data["passage_data"])
         mapped_wiki_into_qnnstrkey(qnn_str_key, in_data["str2qnn"])
-        mapped_wiki_into_strkey_and_sidsets(all_str_key, sid_sets, in_data["sets"])
+        mapped_wiki_into_strkey(all_str_key, in_data["sets"])
         mapped_wiki_into_sidnormer(
             all_str_key, qnn_str_key, sid_normer, in_data["str2qnn"]
         )
 
     # Save order matters due to memory used for post-processing pre-aving
-    for name, data in sid_sets.items():
-        fu.dumppkl(data, f"{cfg.postp_dir}{name}_set.pkl")
-    del sid_sets
     passage_data.save()
     del passage_data
     # These takes extra memory to save, so do these last
@@ -212,9 +242,45 @@ def reducing__pagedata_strkeys_sidsets_sidnormer(cfg, test=False):
     del qnn_str_key
     all_str_key.save(force=True)
     del all_str_key
-    logging.info(
-        ">> Finished reducing Round 1: StrKeys, PassageData, SidNormer and Sets"
-    )
+    logging.info(">> Finished Reducing Part 1: StrKeys, PassageData, and SidNormer")
+
+
+def reducing__sets(
+    cfg, all_str_key,
+    return_struct=False,
+    test=False,
+):
+    sid_sets = {}
+
+    # Run Reduce
+    mapped_files = get_all_mapped_files(cfg)
+    if test:
+        mapped_files = mapped_files[:3]
+    for ind, mf in enumerate(mapped_files):
+        ru.processed_log(ind, len(mapped_files))
+        in_data = fu.load_file(mf, verbose=False)
+        mapped_wiki_into_sidsets(
+            cfg,
+            all_str_key,
+            sid_sets,
+            in_data['sets'],
+        )
+
+    # Verify and dump
+    logging.info(">> Verify Set Reduce Results:")
+    for graph_t, sets_data in sid_sets.items():
+        for set_t, data in sets_data.items():
+            logging.info(f"   [{graph_t:30}][{set_t:10}] set size: {len(data):,}")
+            out_path = get_set_data_path(cfg, graph_t, set_t)
+            if test:
+                logging.info(">> Running in test mode, don't dump")
+                continue
+            fu.dumppkl(data, out_path)
+
+    logging.info("")
+    logging.info(">> Finished reducing sets")
+    if return_struct:
+        return sid_sets
 
 
 def reducing__graphs(cfg, str_key, input_dir, keys_to_run=None, test=False):
@@ -264,7 +330,59 @@ def reducing__graphs(cfg, str_key, input_dir, keys_to_run=None, test=False):
     for graph_type in cfg.graph_types:
         for name, data in out_dicts[graph_type].items():
             fu.dumppkl(data, get_graph_data_path(cfg, graph_type, name))
-    logging.info(">> Finished reducing round 2: All graph dicts")
+    logging.info(">> Finished Reducing Part 3: All graph dicts")
+
+
+# Goal: mapping from norm_str to all matching sids (of any type)
+# Need: sid_sets, all_str_key, qnn_str_key, sid_normer
+# Return: graph_t: norm_t: norm_str: sids
+def reducing__norm2sids(
+    cfg,
+    sid_sets,
+    all_str_key,
+    qnn_str_key,
+    sid_normer,
+    test=False,
+):
+    # Run Reduce & Verify
+    logging.info(">> Verifying the norm2sid reduce:")
+    all_norm_fxns = su.get_all_norm_fxns(
+        all_str_key=all_str_key,
+        qnn_str_key=qnn_str_key,
+        sid_normer=sid_normer,
+    )
+    for graph_t, sets in sid_sets.items():
+        all_sids = set()
+        for sid_set in sets.values():
+            all_sids.update(sid_set)
+
+        for norm_t, norm_fxn in all_norm_fxns.items():
+            norm2sids = defaultdict(set)
+            for ind, sid in enumerate(all_sids):
+                st = all_str_key.get_sid2str(sid)
+                norm_str = norm_fxn(st)
+                norm2sids[norm_str].add(sid)
+                if test and ind > 30000:
+                    break
+
+            outpath = get_norm2sids_path(cfg, graph_t, norm_t)
+            if not test:
+                fu.dumppkl(dict(norm2sids), outpath)
+            else:
+                logging.info(">> Running in test mode, don't dump")
+
+            # Calculate Verify stats
+            metrics = Metrics()
+            for norm_str, sids in norm2sids.items():
+                metrics.add_to_hists_per('num_sids', None, len(sids))
+            metrics.update_agg_stats()
+            metrics_str = f" - [{graph_t:30}][{norm_t:20}]"
+            for val_name, val in metrics.vals.items():
+                metrics_str += f' {val_name}: {val:0.2f}'
+            logging.info(metrics_str)
+
+    logging.info("")
+    logging.info(">> Finished reducing norm2sids")
 
 
 def group_ori_by_ent(
@@ -381,6 +499,8 @@ def reducing__ori2entdetailed(
     for graph_type in graph_types:
         for name, data in out_dicts[graph_type].items():
             fu.dumppkl(data, get_ori2entdetailed_path(cfg, graph_type, name))
+
+    logging.info(">> Finished Reducing Part 5: Ori2entdetailed")
 
 
 # # --------- v2: Mapping Functions ----------# #

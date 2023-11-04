@@ -49,11 +49,35 @@ def longest_common_substring(x: str, y: str) -> (int, int, int):
 # ---------- Normalization Utils ----------- #
 
 
+# Apply a sequence of norm_fxns to a single string
 def apply_norms(ori_str, norm_fxns):
     normed_str = ori_str
     for nf in norm_fxns:
         normed_str = nf(normed_str)
     return normed_str
+
+
+def get_all_norm_fxns(
+    all_str_key=None,
+    sid_normer=None,
+    qnn_str_key=None,
+):
+    def apply_qnn(st):
+        return qnn_norm(dtk, st, all_str_key, sid_normer, qnn_str_key)
+    dtk = get_detokenizer()
+    # matches types in cfg.wiki_processing.norm_types
+    norm_fxns = {
+        'u': unorm,
+        'l': lnorm,
+        'lu': lunorm,
+        'qnn': apply_qnn,
+        'prep': prep_norm,
+        'prep_l': lambda st: apply_norms(st, [prep_norm, lnorm]),
+        'prep_u': lambda st: apply_norms(st, [prep_norm, unorm]),
+        'prep_lu': lambda st: apply_norms(st, [prep_norm, lunorm]),
+        'prep_qnn': lambda st: apply_norms(st, [prep_norm, apply_qnn])
+    }
+    return norm_fxns
 
 
 def get_detokenizer():
@@ -112,10 +136,24 @@ def qmp_norm(s):
 
 
 # My current best guess at the full normalization applied by qampari
-def qnn_norm(detokenizer, s):
-    if s is None or s == "":
-        return s
-    return qmp_norm(normalize(detokenizer, s))
+def qnn_norm(
+    detokenizer,
+    st,
+    all_str_key=None,
+    sid_normer=None,
+    qnn_str_key=None,
+):
+    if st is None or st == "":
+        return st
+
+    # Lazy check for existance and nothing going wrong
+    try:
+        sid = all_str_key.get_str2sid(st)
+        nsid = sid_normer.get_sid2nsid(sid)
+        nstr = qnn_str_key.get_sid2str(nsid)
+        return nstr
+    except:  # noqa: E722
+        return qmp_norm(normalize(detokenizer, st))
 
 
 def unorm(text):
