@@ -1,6 +1,8 @@
 import copy
 import glob
+import os
 
+from utils.util_classes import Metrics
 import utils.file_utils as fu
 import multiqa_utils.qampari_utils as qmp
 import multiqa_utils.romqa_utils as rqa
@@ -88,8 +90,10 @@ def get_prompt_path(cfg, lm, prompt_type, dataset):
 
 # ---------- Dataset Loading ----------- #
 
+
 def get_data_type(data_name, split):
     return f'{data_name}_{split}'
+
 
 def data_type_to_name_split(data_type):
     splits = []
@@ -146,14 +150,10 @@ def visualize_datasets(datasets, ind, max_len=100, dtk=None):
         )
         print(f'  - {"question:":20} {get_question(data_dev[ind], data_name)}')
         ans_sets = str(get_answer_sets(data_dev[ind], data_name))
-        print(
-            f'  - {"answer_sets:":20} {ans_sets[:max_len]}'
-        )
+        print(f'  - {"answer_sets:":20} {ans_sets[:max_len]}')
         print(f'  - {"gt_ent_sets:":20} {get_gt_ent_sets(data_dev[ind], data_name)}')
         proof_data = str(get_proof_data(data_dev[ind], dtk, data_name))
-        print(
-            f'  - {"proof_data:":20} {proof_data[:max_len]}'
-        )
+        print(f'  - {"proof_data:":20} {proof_data[:max_len]}')
         print()
 
 
@@ -232,14 +232,17 @@ def get_elq_ent_oris(edata_elem):
         'elq_ori_str': get_elq_ori_strs(edata_elem),
     }
 
+
 # == Llama2 == #
 def get_llama2_dist_out_dir(cfg, dataset, split):
     return f'{cfg.download_dir}data/{dataset}/llama2_7b_output/{split}/'
+
 
 def get_llama2_dist_out_path(cfg, dataset, split, shard_ind, version):
     out_dir = get_llama2_dist_out_dir(cfg, dataset, split)
     os.makedirs(out_dir, exist_ok=True)
     return f'{out_dir}data_pt{shard_ind}_{version}.pkl'
+
 
 """
 # Current method of interacting with this:
@@ -247,6 +250,7 @@ llama2_raw_data = du.load_llama2_output_data(cfg, dataset, split)
 prompt = fu.load_file(du.get_prompt_path(cfg, 'llama2_7b', 'el_prompt', dataset))
 du.parse_llama2_prompt_pred('el_prompt', llama2_raw_data[0], prompt)
 """
+
 
 # TODO: add this to get_data instead of having standalone
 def load_llama2_output_data(cfg, dataset, split):
@@ -258,6 +262,7 @@ def load_llama2_output_data(cfg, dataset, split):
         all_lines.extend(fu.load_file(f, verbose=False))
     return all_lines
 
+
 def get_llama2_pred_from_output_prompt(output, prompt):
     plen = len(prompt)
     assert output[:plen] == prompt
@@ -268,6 +273,7 @@ def get_llama2_pred_from_output_prompt(output, prompt):
             continue
         pred_lines.append(pl)
     return pred, pred_lines
+
 
 def parse_llama2_prompt_pred(prompt_type, output, prompt):
     full_pred, pred_lines = get_llama2_pred_from_output_prompt(output, prompt)
@@ -284,9 +290,9 @@ def parse_llama2_prompt_pred(prompt_type, output, prompt):
         }
         # Get the first instance of this key if exists
         for key, key_str in keys.items():
-            for l in pred_lines:
-                if key_str in l:
-                    out[key] = l[len(key_str):]
+            for line in pred_lines:
+                if key_str in line:
+                    out[key] = line[len(key_str) :]
                     break
 
         if 'question' not in out:
@@ -295,19 +301,20 @@ def parse_llama2_prompt_pred(prompt_type, output, prompt):
             if k in out:
                 out[k] = list(set([v.strip() for v in out[k].split(',')]))
         return out
-    
+
+
 # TODO: move this to the verify script!
 def link_outputs_to_data_ids(prompt_t, prompt, in_data, out_data):
     metrics = Metrics()
-    
+
     # Map input data by question
     q2data = {qdata['question']: qdata for qdata in in_data}
-    
+
     # Map question to outputs
     q2outs = {}
     for odata in out_data:
         parsed = parse_llama2_prompt_pred(prompt_t, odata, prompt)
-        
+
         # Collect stats on parsed data
         qinfo = {
             'pred': parsed['pred_lines'],
@@ -319,22 +326,23 @@ def link_outputs_to_data_ids(prompt_t, prompt, in_data, out_data):
                 metrics.add_example(name=f'{k}_notin_lmout__data', item=qinfo)
         if 'question' not in parsed:
             continue
-            
+
         # Verify that the parsed question is in the input dataset
         if parsed['question'] not in q2data:
             metrics.increment_val(name='lmq_notin_indata', amount=1)
             metrics.add_example(name='lmq_notin_indata__data', item=qinfo)
             continue
         q2outs[parsed['question']] = parsed
-    
+
     # identify questions from in_data missing int output
     missing_qs = set(q2data.keys()) - set(q2outs.keys())
     metrics.increment_val(name='unparsed_qs', amount=len(missing_qs))
     metrics.add_examples(name='unparsed_qs__data', items=missing_qs)
-    
+
     # Map from q2outs to id2outs
     id2outs = {q2data[q]['id']: out for q, out in q2outs.items()}
     return id2outs, metrics.to_dict()
+
 
 def get_missing_question_inds(in_data, missing_qlist):
     missing_inds = []

@@ -1,20 +1,23 @@
-
 import multiqa_utils.string_utils as su
 
-## =============================================== ##
-## =============== Info Extractors =============== ##
-## =============================================== ##
+# # =============================================== # #
+# # =============== Info Extractors =============== # #
+# # =============================================== # #
 
 # --------- Original Data Format Extractors ---------- #
+
 
 def get_original_id(qdata):
     return None
 
+
 def get_question(qdata):
     return qdata['query']
 
+
 def get_question_type(qdata):
     return 'complex_multi'
+
 
 # QST
 # Notes:
@@ -29,26 +32,26 @@ def get_answer_sets(qdata):
     possible_answer_sets = [all_ans]
     return possible_answer_sets
 
+
 def get_gt_ent_sets(qdata):
     return None
+
 
 # Notes:
 # - Run normalize on the docs if we want any chance of getting them.
 def get_proof_data(qdata, dtk):
     proof_data_by_answer = []
     for doc in qdata['docs']:
-        if qdata['metadata']['attributions'] == None:
+        if qdata['metadata']['attributions'] is None:
             proof_data_by_answer.append([])
             continue
 
         doc_data_list = qdata['metadata']['attributions'][doc]
         all_proofs = set()
         for proof_dict in doc_data_list:
-            if proof_dict == None:
+            if proof_dict is None:
                 continue
             for text in proof_dict.values():
-                all_proofs.add(
-                    su.quest_norm(su.normalize(dtk, text))
-                )
+                all_proofs.add(su.quest_norm(su.normalize(dtk, text)))
         proof_data_by_answer.append(list(all_proofs))
     return proof_data_by_answer

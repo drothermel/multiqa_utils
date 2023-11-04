@@ -1,16 +1,15 @@
 import glob
 import os
 import psutil
-from collections.abc import Mapping, Container
 import time
 import multiprocessing
 import random
+import logging
 
 import utils.file_utils as fu
 
 import maqa_utils.wiki_utils as wu
 import maqa_utils.tokenizer_utils as tu
-import maqa_utils.eval_utils as eu
 
 from maqa_utils.helper_classes import PassageData, StringKey, SidNormer
 
@@ -137,7 +136,9 @@ def test__update_with_chunk_data(filename, chunk_ind=0, verbose=False):
     raw_chunks = fu.load_file(filename, verbose=verbose)
     test_chunk = raw_chunks[chunk_ind]
     tokenizer = tu.initialize_tokenizer(wu.PATH_ARGS.tokenizer_config)
-    get_graph_key = lambda use_links: "tags_and_links" if use_links else "just_tags"
+
+    def get_graph_key(use_links):
+        return "tags_and_links" if use_links else "just_tags"
 
     str2qnn = {}
     pdl = {}  # page_id -> {}
@@ -261,7 +262,8 @@ def test_datastructs(verbose=False):
         assert i in sid_normer.get_nsid2sids(sid_normer.get_sid2nsid(i))
     if verbose:
         print(
-            f"Num nsids: {sid_normer.nsid2sids.shape[0]}, Max num shared sids: {sid_normer.nsid2sids.shape[1]}"
+            f"Num nsids: {sid_normer.nsid2sids.shape[0]}, "
+            + f"Max num shared sids: {sid_normer.nsid2sids.shape[1]}"
         )
 
     print(">> [Passed] Function ran, use verbose=True to see output")
@@ -277,12 +279,12 @@ def check_mapped_file(in_file):
     try:
         in_data = fu.load_file(in_file, verbose=False)
         out_data = fu.load_file(out_file, verbose=False)
-        for l in in_data:
-            page_id, chunk_num = l["chunk_id"].split("__")
+        for line in in_data:
+            page_id, chunk_num = line["chunk_id"].split("__")
             chunk_num = int(chunk_num)
             assert page_id in out_data["passage_data"]
             assert chunk_num in out_data["passage_data"][page_id]["chunk_num_list"]
-    except:
+    except:  # noqa: E722
         logging.info(f">> Missing: {in_file}")
         return in_file
     return None
@@ -305,7 +307,10 @@ def verify_all_processed(input_dir, processes=24, verbose=False):
 
 def verify_datastructs():
     print("Load Data Structs:")
-    load_str_fxn = lambda args: StringKey(**args)
+
+    def load_str_fxn(args):
+        return StringKey(**args)
+
     all_str_key, ask_time, ask_space = load_time_space(
         load_str_fxn,
         {"data_dir": wu.PATH_ARGS.stringkeys_dir, "name": "ori_v0"},
@@ -317,7 +322,9 @@ def verify_datastructs():
     )
     print(f">> {'qnn_str_key':15} [{qsk_space:0.2f}GB] {qsk_time/60.0:0.1f} min")
 
-    load_pd_fxn = lambda args: PassageData(**args)
+    def load_pd_fxn(args):
+        return PassageData(**args)
+
     passage_data, pd_time, pd_space = load_time_space(
         load_pd_fxn,
         {
@@ -329,7 +336,9 @@ def verify_datastructs():
     )
     print(f">> {'passage_data':15} [{pd_space:0.2f}GB] {pd_time/60.0:0.1f} min")
 
-    load_sn_fxn = lambda args: SidNormer(**args)
+    def load_sn_fxn(args):
+        return SidNormer(**args)
+
     sid_normer, sn_time, sn_space = load_time_space(
         load_sn_fxn, {"data_dir": wu.PATH_ARGS.sidnormer_dir, "name": "v0"}
     )
@@ -343,7 +352,8 @@ def verify_datastructs():
     print(f">> All Str Keys: {len(all_str_key):,} unique strings")
     print(f">> QNN Str Keys: {len(qnn_str_key):,} unique strings")
     print(
-        f">> Sid Normer:   {len(sid_normer):,} sids and {num_nsids:,} nsids by {max_num_sids_per:,} max_num_sids_per"
+        f">> Sid Normer:   {len(sid_normer):,} sids and "
+        + f"{num_nsids:,} nsids by {max_num_sids_per:,} max_num_sids_per"
     )
     for i in range(5):
         sid = random.randint(0, len(all_str_key) - 1)
@@ -363,7 +373,8 @@ def verify_datastructs():
     num_passages_list = [len(pd.passage_dict) for pd in passage_data.page_data.values()]
     avg_passages = sum(num_passages_list) / len(passage_data)
     print(
-        f"  - num_chunks: min {min(num_passages_list):,} avg {avg_passages:0.2f} max {max(num_passages_list):,}"
+        f"  - num_chunks: min {min(num_passages_list):,} "
+        + f"avg {avg_passages:0.2f} max {max(num_passages_list):,}"
     )
     print()
     one_page_ind = random.randint(0, len(passage_data) - 1)
@@ -390,7 +401,9 @@ def verify_graphs():
             )
             len_lists = [len(v) for v in out_dict.values()]
             print(
-                f">> [{graph_type:^30}][{data_type:^15}] num elems: {len(out_dict):30,} avg len lists: {sum(len_lists)/len(len_lists):0.2f}"
+                f">> [{graph_type:^30}][{data_type:^15}] num elems: "
+                + f"{len(out_dict):30,} avg len lists: "
+                + f"{sum(len_lists)/len(len_lists):0.2f}"
             )
 
 
@@ -407,7 +420,7 @@ def aggregate_ori2entdetailed(
             wu.get_ori2entdetailed_path(graph_type, str_ent_type),
             verbose=False,
         )
-    except:
+    except:  # noqa: E722
         print(" ----- REDUCER ERROR: FAILED TO WRITE OUTPUT ------- ")
         return
 
@@ -459,13 +472,16 @@ def aggregate_ori2entdetailed(
     print(f">> Total num ori strings: {len(test_file):,}")
     print(f">> Avg Num ents: {num_ents/i:0.4f}")
     print(
-        f">> Avg Total Count min/avg/max: {tot_mma[0]/i:0.4f} {tot_mma[2]/i:0.4f} {tot_mma[1]/i:0.4f}"
+        ">> Avg Total Count min/avg/max: "
+        + f"{tot_mma[0]/i:0.4f} {tot_mma[2]/i:0.4f} {tot_mma[1]/i:0.4f}"
     )
     print(
-        f">> Avg UCids Count min/avg/max: {ucids_mma[0]/i:0.4f} {ucids_mma[2]/i:0.4f} {ucids_mma[1]/i:0.4f}"
+        ">> Avg UCids Count min/avg/max: "
+        + f"{ucids_mma[0]/i:0.4f} {ucids_mma[2]/i:0.4f} {ucids_mma[1]/i:0.4f}"
     )
     print(
-        f">> Avg UPgs  Count min/avg/max: {upgs_mma[0]/i:0.4f} {upgs_mma[2]/i:0.4f} {upgs_mma[1]/i:0.4f}"
+        ">> Avg UPgs  Count min/avg/max: "
+        + f"{upgs_mma[0]/i:0.4f} {upgs_mma[2]/i:0.4f} {upgs_mma[1]/i:0.4f}"
     )
     print()
 
@@ -485,7 +501,8 @@ def verify_ori2entdetailed():
             verbose = False if i > 0 else True
             if verbose:
                 print(
-                    "-----> Example original strings with a few linked ents & Ori2Ent data"
+                    "-----> Example original strings with "
+                    + "a few linked ents & Ori2Ent data"
                 )
             aggregate_ori2entdetailed(
                 all_str_key,

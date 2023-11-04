@@ -1,4 +1,7 @@
-# Note, written based on https://github.com/castorini/pyserini/blob/master/pyserini/eval/convert_trec_run_to_dpr_retrieval_run.py
+# Note, written based on
+# https://github.com/castorini/pyserini/blob/master/pyserini/eval/
+# convert_trec_run_to_dpr_retrieval_run.py
+
 
 import argparse
 import json
@@ -140,7 +143,8 @@ if __name__ == "__main__":
             for d in dataset:
                 if len(d["positive_ctxs"]) == 0:
                     print(
-                        ">> Found an exisiting version with empty positive contexts, move and redo"
+                        ">> Found an exisiting version with "
+                        + "empty positive contexts, move and redo"
                     )
                     os.rename(args.output, f"{args.output}__w_no_pos")
                     json_contexts_to_dpr_data(

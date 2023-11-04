@@ -1,35 +1,36 @@
 import jsonlines
 import glob
 import os
-from collections import defaultdict, namedtuple
-import regex
-import string
+from collections import defaultdict
 import logging
-import wikipedia
 import re
 import multiprocessing
-import numpy as np
 import html
 
 import utils.file_utils as fu
 import utils.run_utils as ru
 import multiqa_utils.dpr_tokenizer_utils as tu
+import multiqa_utils.string_utils as su
 from multiqa_utils.helper_classes import StringKey, PassageData, SidNormer, Ori2Ent
 
-###################################
-##    Process New Wikidump       ##
-###################################
+# ##################################
+# #    Process New Wikidump       ##
+# ##################################
 
 # TODO: pull in the utils from QAMPARI repo here too
+
 
 # After wikiextractor has already processed the wikidump then we can
 # use this to create base files for a page index.
 #
-# HTML Escaping from: https://medium.com/@jorlugaqui/how-to-strip-html-tags-from-a-string-in-python-7cb81a2bbf44
+# HTML Escaping from:
+# https://medium.com/@jorlugaqui/
+# how-to-strip-html-tags-from-a-string-in-python-7cb81a2bbf44
 # This will:
 #    1) Remove any html tags remaining from the text
 #    2) Append the keywords "Title:" and "Article:" along with the title to the text
-#    3) Format the final output file into a .jsonl in the format expected by pyserini index builder
+#    3) Format the final output file into a .jsonl in the format expected by
+#       pyserini index builder
 def postprocess_wikipedia_segment_to_page_index(infile, outfile, verbose=True):
     clean = re.compile("<.*?>")
     orig_file = fu.load_file(infile, ending=".jsonl")
@@ -49,11 +50,11 @@ def postprocess_wikipedia_segment_to_page_index(infile, outfile, verbose=True):
     fu.dumpjsonl(postprocess_pages, outfile, verbose=verbose)
 
 
-###################################
-##    Extract Wiki Graph Data    ##
-###################################
+# ##################################
+# #    Extract Wiki Graph Data    ##
+# ##################################
 
-## ---- Path Builder Utils ---- ##
+# # ---- Path Builder Utils ---- # #
 
 
 def get_graph_data_path(cfg, graph_type, data_type):
@@ -80,7 +81,7 @@ def get_all_mapped_files(mapped_dir):
     return sorted(glob.glob(get_mapped_file(mapped_dir, "*")))
 
 
-## ---- Key Parsing ---- ##
+# # ---- Key Parsing ---- # #
 
 
 def get_norm_bool_from_ent_str_type(ent_str_type):
@@ -89,9 +90,9 @@ def get_norm_bool_from_ent_str_type(ent_str_type):
     return norm_bools
 
 
-## --------- Postprocess Wikipedia v2 ----------##
+# # --------- Postprocess Wikipedia v2 ----------# #
 
-## --------- v2: Reducing Functions ----------##
+# # --------- v2: Reducing Functions ----------# #
 def mapped_wiki_into_passage_data(passage_data, mapped_passage_data_input):
     for pid, pdata in mapped_passage_data_input.items():
         passage_data.add_page(
@@ -133,17 +134,27 @@ def mapped_wiki_into_sidnormer(str_key, qnn_key, sid_normer, mapped_str2qnn):
         nsid = qnn_key.get_str2sid(qnn_str)
         sid_normer.add_sid_to_nsid(sid, nsid)
 
+
+# TODO: Implement
+def get_mapped_dir(cfg):
+    assert False
+
+
+# TODO: Implement
 def reducing__token_data(cfg):
+    assert False
+    """
     files = get_all_mapped_files(get_mapped_dir(cfg))
-    #TODO: setup tokenizer
+    # TODO: setup tokenizer
+    tokenizer = None
 
     for i, f in enumerate(files):
         ru.processed_log(i, len(files))
         in_data = fu.load_file(f)
-        tokenized_title = tokenizer.encode(title, add_special_tokens=False)
-        tokenized_passage = tokenizer.encode(passage, add_special_tokens=False)
-
-
+        tokenized_title = tokenizer.encode(in_data['title'], add_special_tokens=False)
+        tokenized_passage = tokenizer.encode(
+            in_data['passage'], add_special_tokens=False
+        )
 
     # for each file: dict['tokens'] is
     # cid -> {'just_tags': tok_data, 'tags_and_links': tok_data}
@@ -156,7 +167,7 @@ def reducing__token_data(cfg):
     #      string: {'tok_spans': [], 'str_spans': []},
     #   }
     # }
-
+    """
 
 
 def reducing__pagedata_strkeys_sidsets_sidnormer(cfg, test=False):
@@ -206,7 +217,7 @@ def reducing__pagedata_strkeys_sidsets_sidnormer(cfg, test=False):
     )
 
 
-def reducing__graphs(cfg, str_key, keys_to_run=None, test=False):
+def reducing__graphs(cfg, str_key, input_dir, keys_to_run=None, test=False):
     keys_to_run = cfg.graphs if keys_to_run is None else keys_to_run
     files = get_all_mapped_files(input_dir)
     files = files[:3] if test else files
@@ -360,13 +371,9 @@ def reducing__ori2entdetailed(
                     out_dicts[gt][dt][ori_sid].append(
                         Ori2Ent(
                             ent_sid=ent_sid,
-                            num_total=intdata["ori2ent2tot"][ori_sid][ent_sid],
-                            num_unique_cids=len(
-                                intdata["ori2ent2cids"][ori_sid][ent_sid]
-                            ),
-                            num_unique_pages=len(
-                                intdata["ori2ent2pages"][ori_sid][ent_sid]
-                            ),
+                            num_total=num_tot,
+                            num_unique_cids=num_unique_cids,
+                            num_unique_pages=num_unique_pages,
                         )
                     )
 
@@ -376,7 +383,7 @@ def reducing__ori2entdetailed(
             fu.dumppkl(data, get_ori2entdetailed_path(cfg, graph_type, name))
 
 
-## --------- v2: Mapping Functions ----------##
+# # --------- v2: Mapping Functions ----------# #
 
 
 def get_inds_in_chunk(chunk, strs, cid=None):
@@ -387,7 +394,7 @@ def get_inds_in_chunk(chunk, strs, cid=None):
                 if st not in str_to_inds:
                     str_to_inds[st] = []
                 str_to_inds[st].append((m.start(), m.end()))
-        except:
+        except:  # noqa: E722
             logging.info(f">> ERROR in re: {cid} {st} {chunk}")
             continue
     return str_to_inds
@@ -422,7 +429,7 @@ def get_token_inds(tokenizer, title, chunk, strs, prep_title=None, cid=None):
     st_inds_list = sorted(st_inds_list, key=lambda x: (x[1][0], x[1][1]))
     for st, inds in st_inds_list:
         pre_str = chunk[: inds[0]]
-        act_str = chunk[inds[0] : inds[1]]
+        # act_str = chunk[inds[0] : inds[1]]
         through_str = chunk[: inds[1]]
 
         before_ind = tokenizer.encode(pre_str, add_special_tokens=False)
@@ -600,14 +607,15 @@ def update_with_chunk_data(
             graphs[key]["ent2cids"][prep_title].add(cid)
 
         # Links and Tags
-        parsed_str_list = [[l for l in ll] for ll in chunk_data["tags"]]
+        parsed_str_list = [[li for li in ll] for ll in chunk_data["tags"]]
         if use_links:
             for llist in chunk_data["links"]:
-                normed_link_ent = norm_links(llist[1])
+                normed_link_ent = su.norm_links(llist[1])
                 if normed_link_ent == "":
                     continue
                 new_llist = [
-                    llist[i] if i != 1 else normed_link_ent for i in range(len(llist))
+                    llist[ii] if ii != 1 else normed_link_ent
+                    for ii in range(len(llist))
                 ]
                 parsed_str_list.append(new_llist)
 
@@ -644,18 +652,23 @@ def update_with_chunk_data(
 
 
 def process_chunked_fixed_file(
-    input_file, output_dir=None, tokenizer=None, verbose=False
+    input_file,
+    tokenizer_config_path,
+    wiki_chunked_fixed_parsed_dir,
+    output_dir=None,
+    tokenizer=None,
+    verbose=False,
 ):
     if tokenizer is None:
-        tokenizer = tu.initialize_tokenizer(PATH_ARGS.tokenizer_config)
+        tokenizer = tu.initialize_tokenizer(tokenizer_config_path)
 
     if output_dir is None:
-        output_dir = PATH_ARGS.wiki_chunked_fixed_parsed_dir
+        output_dir = wiki_chunked_fixed_parsed_dir
 
     input_filename = input_file.split("/")[-1][: -len(".jsonl")]
-    get_graph_key = lambda use_links: "graph_data_" + (
-        "tags_and_links" if use_links else "just_tags"
-    )
+
+    def get_graph_key(use_links):
+        return "graph_data_" + ("tags_and_links" if use_links else "just_tags")
 
     out_file = get_mapped_file(output_dir, input_filename)
     if os.path.exists(out_file):
@@ -702,11 +715,12 @@ def process_all_chunked_fixed(input_dir, processes=100, test=False, mod=None, eq
     all_files = sorted(glob.glob(f"{input_dir}wikipedia_chunks_*.jsonl"))
     if test:
         # all_files = all_files[:processes]
+        base = "/scratch/ddr8143/wikipedia/tagme_dumps_qampari_wikipedia_chunked_fixed/"
         all_files = [
-            "/scratch/ddr8143/wikipedia/tagme_dumps_qampari_wikipedia_chunked_fixed/wikipedia_chunks_14384.jsonl",
-            "/scratch/ddr8143/wikipedia/tagme_dumps_qampari_wikipedia_chunked_fixed/wikipedia_chunks_14641.jsonl",
-            "/scratch/ddr8143/wikipedia/tagme_dumps_qampari_wikipedia_chunked_fixed/wikipedia_chunks_1496.jsonl",
-            "/scratch/ddr8143/wikipedia/tagme_dumps_qampari_wikipedia_chunked_fixed/wikipedia_chunks_15009.jsonl",
+            f"{base}wikipedia_chunks_14384.jsonl",
+            f"{base}wikipedia_chunks_14641.jsonl",
+            f"{base}wikipedia_chunks_1496.jsonl",
+            f"{base}wikipedia_chunks_15009.jsonl",
         ]
     if mod is not None and eq is not None:
         all_files = [f for i, f in enumerate(all_files) if i % mod == eq]
@@ -720,7 +734,7 @@ def process_all_chunked_fixed(input_dir, processes=100, test=False, mod=None, eq
             result_list.append(res)
 
 
-## --------- Postprocess Wikipedia ----------##
+# # --------- Postprocess Wikipedia ----------# #
 
 
 def glob_alpha_segs(top_wiki_dir):
@@ -737,8 +751,8 @@ def glob_all_wiki_files(top_wiki_dir):
 
 def process_tag(raw_tag):
     if raw_tag is not None:
-        qn_tag = qmp_norm(raw_tag)
-        nqn_tag = qmp_norm(normalize(raw_tag))
+        qn_tag = su.qmp_norm(raw_tag)
+        nqn_tag = su.qnn_norm(su.get_detokenizer(), raw_tag)
         if nqn_tag is not None and len(nqn_tag) > 0:
             return nqn_tag, qn_tag
     return None, None
@@ -746,10 +760,10 @@ def process_tag(raw_tag):
 
 def process_link(raw_link):
     if raw_link is not None:
-        fixed_link = norm_links(raw_link)
+        fixed_link = su.norm_links(raw_link)
         if fixed_link is not None and len(fixed_link) > 0:
-            qn_link = qmp_norm(fixed_link)
-            nqn_link = qmp_norm(normalize(fixed_link))
+            qn_link = su.qmp_norm(fixed_link)
+            nqn_link = su.qnn_norm(su.get_detokenizer(), fixed_link)
             if nqn_link is not None and len(nqn_link) > 0:
                 return nqn_link, qn_link
     return None, None
@@ -761,27 +775,28 @@ def process_link(raw_link):
 def expand_ldata(orig_ldata):
     ldata = {**orig_ldata}
 
-    ## Expand the title
+    # # Expand the title
+    dtk = su.get_detokenizer()
     title = ldata["title"]
     prep_title = title.split("(")[0]  # pre_process_title
     ldata["prep_title"] = prep_title
-    ldata["qnn_title"] = qmp_norm(normalize(title))
-    ldata["qnn_prep_title"] = qmp_norm(normalize(prep_title))
+    ldata["qnn_title"] = su.qnn_norm(dtk, title)
+    ldata["qnn_prep_title"] = su.qnn_norm(dtk, prep_title)
     # for backwards compatability
-    ldata["qn_title"] = qmp_norm(title)
-    ldata["on_title"] = old_norm(title)
+    ldata["qn_title"] = su.qmp_norm(title)
+    ldata["on_title"] = su.old_norm(title)
 
-    ## Expand the links and tags
+    # # Expand the links and tags
     extended_links = []
-    for l in ldata["links"]:
-        ori_text, ent_str = l
-        qnn_ori_text = qmp_norm(normalize(ori_text))
+    for link in ldata["links"]:
+        ori_text, ent_str = link
+        qnn_ori_text = su.qnn_norm(dtk, ori_text)
 
-        fixed_ent_str = norm_links(ent_str)
+        fixed_ent_str = su.norm_links(ent_str)
         if fixed_ent_str is None:
             qnn_ent_str = None
         else:
-            qnn_ent_str = qmp_norm(normalize(fixed_ent_str))
+            qnn_ent_str = su.qnn_norm(dtk, fixed_ent_str)
         extended_links.append(
             [
                 ori_text,
@@ -791,13 +806,13 @@ def expand_ldata(orig_ldata):
             ]
         )
     extended_tags = []
-    for t in ldata["tags"]:
-        ori_text, ent_str = t
-        qnn_ori_text = qmp_norm(normalize(ori_text))
+    for tag in ldata["tags"]:
+        ori_text, ent_str = tag
+        qnn_ori_text = su.qnn_norm(dtk, ori_text)
         if ent_str is None:
             qnn_ent_str = None
         else:
-            qnn_ent_str = qmp_norm(normalize(ent_str))
+            qnn_ent_str = su.qnn_norm(dtk, ent_str)
         extended_tags.append(
             [
                 ori_text,
@@ -899,11 +914,12 @@ def long_chunk_to_small_chunks(
 
 def write_fixed_too_long_chunks(
     file_list,
+    wiki_fixed_chunk_dir,
     max_num_words=200,
     goal_num_words=100,
     period_threshold=40,
 ):
-    fixed_out_dir = PATH_ARGS.wiki_fixed_chunk_dir
+    fixed_out_dir = wiki_fixed_chunk_dir
     for i, in_path in enumerate(file_list):
         ru.processed_log(i, len(file_list))
         out_path = fixed_out_dir + in_path.split("/")[-1]
@@ -912,8 +928,8 @@ def write_fixed_too_long_chunks(
             continue
         with jsonlines.Writer(open(out_path, "w+"), flush=True) as writer:
             with jsonlines.open(in_path) as reader:
-                for l in reader:
-                    ldata = l["meta"]
+                for line in reader:
+                    ldata = line["meta"]
                     chunk = ldata["content"]
                     if len(chunk) > max_num_words * 3:
                         if len(chunk.split()) <= max_num_words:

@@ -1,5 +1,4 @@
 import os
-import jsonlines
 import json
 import argparse
 import logging
@@ -13,7 +12,6 @@ from transformers import BertTokenizer
 
 from elq.index.faiss_indexer import DenseHNSWFlatIndexer
 from elq.biencoder.biencoder import load_biencoder
-from elq.vcg_utils.measures import entity_linking_tp_with_overlap
 
 # Note: Separate file bc elq library requires different
 # conda environment (el4qa).
@@ -301,35 +299,53 @@ def _run_biencoder(
 ):
     """
     Returns: tuple
-        labels (List[int]) [(max_num_mentions_gold) x exs]: gold labels -- returns None if no labels
-        nns (List[Array[int]]) [(# of pred mentions, cands_per_mention) x exs]: predicted entity IDs in each example
-        dists (List[Array[float]]) [(# of pred mentions, cands_per_mention) x exs]: scores of each entity in nns
-        pred_mention_bounds (List[Array[int]]) [(# of pred mentions, 2) x exs]: predicted mention boundaries in each examples
-        mention_scores (List[Array[float]]) [(# of pred mentions,) x exs]: mention score logit
-        cand_scores (List[Array[float]]) [(# of pred mentions, cands_per_mention) x exs]: candidate score logit
+        labels (List[int])
+            [(max_num_mentions_gold) x exs]:
+            gold labels -- returns None if no labels
+
+        nns (List[Array[int]])
+            [(# of pred mentions, cands_per_mention) x exs]:
+            predicted entity IDs in each example
+
+        dists (List[Array[float]])
+            [(# of pred mentions, cands_per_mention) x exs]:
+            scores of each entity in nns
+
+        pred_mention_bounds (List[Array[int]])
+            [(# of pred mentions, 2) x exs]:
+            predicted mention boundaries in each examples
+
+        mention_scores (List[Array[float]])
+            [(# of pred mentions,) x exs]:
+            mention score logit
+
+        cand_scores (List[Array[float]])
+            [(# of pred mentions, cands_per_mention) x exs]:
+            candidate score logit
     """
     biencoder.model.eval()
-    biencoder_model = biencoder.model
-    if hasattr(biencoder.model, "module"):
-        biencoder_model = biencoder.model.module
+    # biencoder_model = biencoder.model
+    # if hasattr(biencoder.model, "module"):
+    #    biencoder_model = biencoder.model.module
 
     context_inputs = []
     nns = []
     dists = []
-    mention_dists = []
+    # mention_dists = []
     pred_mention_bounds = []
     mention_scores = []
     cand_scores = []
-    sample_idx = 0
-    ctxt_idx = 0
-    label_ids = None
+    # sample_idx = 0
+    # ctxt_idx = 0
+    # label_ids = None
     for step, batch in enumerate(dataloader):
         if step % args.print_every == 0:
             perc_complete = -1.0
             if hasattr(args, "num_batches"):
                 perc_complete = step * 100.0 / args.num_batches
             logging.info(
-                f">> [{perc_complete:0.2f}%] Processing {step} out of {args.num_batches} batches"
+                f">> [{perc_complete:0.2f}%] Processing {step} "
+                + f"out of {args.num_batches} batches"
             )
 
         context_input = batch[0].to(device)
@@ -359,11 +375,12 @@ def _run_biencoder(
                         text_encs=embedding_ctxt,
                         cand_encs=candidate_encoding.to(device),
                     )
-                    # DIM (all_pred_mentions_batch, num_cand_entities); (all_pred_mentions_batch, num_cand_entities)
+                    # DIM (all_pred_mentions_batch, num_cand_entities);
+                    #     (all_pred_mentions_batch, num_cand_entities)
                     top_cand_logits_shape, top_cand_indices_shape = cand_logits.topk(
                         num_cand_entities, dim=-1, sorted=True
                     )
-                except:
+                except:  # noqa: E722
                     # for memory savings, go through one chunk of candidates at a time
                     SPLIT_SIZE = 1000000
                     done = False
@@ -373,7 +390,8 @@ def _run_biencoder(
                         max_chunk = int(len(candidate_encoding) / SPLIT_SIZE)
                         for chunk_idx in range(max_chunk):
                             try:
-                                # DIM (num_total_mentions, num_cand_entities); (num_total_mention, num_cand_entities)
+                                # DIM (num_total_mentions, num_cand_entities);
+                                #     (num_total_mention, num_cand_entities)
                                 top_cand_logits, top_cand_indices = embedding_ctxt.mm(
                                     candidate_encoding[
                                         chunk_idx
@@ -397,12 +415,14 @@ def _run_biencoder(
                                     import pdb
 
                                     pdb.set_trace()
-                            except:
+                            except:  # noqa: E722
                                 SPLIT_SIZE = int(SPLIT_SIZE / 2)
                                 break
                         if len(top_cand_indices_list) == max_chunk:
-                            # DIM (num_total_mentions, num_cand_entities); (num_total_mentions, num_cand_entities) -->
-                            #       top_top_cand_indices_shape indexes into top_cand_indices
+                            # DIM (num_total_mentions, num_cand_entities);
+                            #     (num_total_mentions, num_cand_entities) -->
+                            #       top_top_cand_indices_shape indexes
+                            #       into top_cand_indices
                             (
                                 top_cand_logits_shape,
                                 top_top_cand_indices_shape,
@@ -420,7 +440,8 @@ def _run_biencoder(
                             )
                             done = True
             else:
-                # DIM (all_pred_mentions_batch, num_cand_entities); (all_pred_mentions_batch, num_cand_entities)
+                # DIM (all_pred_mentions_batch, num_cand_entities);
+                #     (all_pred_mentions_batch, num_cand_entities)
                 top_cand_logits_shape, top_cand_indices_shape = indexer.search_knn(
                     embedding_ctxt.cpu().numpy(), num_cand_entities
                 )
@@ -449,7 +470,8 @@ def _run_biencoder(
             COMPUTE FINAL SCORES FOR EACH CAND-MENTION PAIR + PRUNE USING IT
             """
             # Has NAN for impossible mentions...
-            # log p(entity && mb) = log [p(entity|mention bounds) * p(mention bounds)] = log p(e|mb) + log p(mb)
+            # log p(entity && mb) = log [p(entity|mention bounds) *
+            #             p(mention bounds)] = log p(e|mb) + log p(mb)
             # DIM (bs, max_num_pred_mentions, num_cand_entities)
             scores = (
                 torch.log_softmax(top_cand_logits, -1)
@@ -457,7 +479,8 @@ def _run_biencoder(
             )
 
             """
-            DON'T NEED TO RESORT BY NEW SCORE -- DISTANCE PRESERVING (largest entity score still be largest entity score)
+            DON'T NEED TO RESORT BY NEW SCORE -- DISTANCE
+            PRESERVING (largest entity score still be largest entity score)
             """
 
             for idx in range(len(batch[0])):
@@ -465,21 +488,26 @@ def _run_biencoder(
                 context_inputs.append(
                     context_input[idx][mask_ctxt[idx]].data.cpu().numpy()
                 )
-                # [(max_num_mentions, cands_per_mention) x exs] <= (bsz, max_num_mentions=num_cand_mentions, cands_per_mention)
+                # [(max_num_mentions, cands_per_mention) x exs] <=
+                #       (bsz, max_num_mentions=num_cand_mentions, cands_per_mention)
                 nns.append(
                     top_cand_indices[idx][left_align_mask[idx]].data.cpu().numpy()
                 )
-                # [(max_num_mentions, cands_per_mention) x exs] <= (bsz, max_num_mentions=num_cand_mentions, cands_per_mention)
+                # [(max_num_mentions, cands_per_mention) x exs] <=
+                #       (bsz, max_num_mentions=num_cand_mentions, cands_per_mention)
                 dists.append(scores[idx][left_align_mask[idx]].data.cpu().numpy())
-                # [(max_num_mentions, 2) x exs] <= (bsz, max_num_mentions=num_cand_mentions, 2)
+                # [(max_num_mentions, 2) x exs] <=
+                #      (bsz, max_num_mentions=num_cand_mentions, 2)
                 pred_mention_bounds.append(
                     chosen_mention_bounds[idx][left_align_mask[idx]].data.cpu().numpy()
                 )
-                # [(max_num_mentions,) x exs] <= (bsz, max_num_mentions=num_cand_mentions)
+                # [(max_num_mentions,) x exs] <=
+                #      (bsz, max_num_mentions=num_cand_mentions)
                 mention_scores.append(
                     chosen_mention_logits[idx][left_align_mask[idx]].data.cpu().numpy()
                 )
-                # [(max_num_mentions, cands_per_mention) x exs] <= (bsz, max_num_mentions=num_cand_mentions, cands_per_mention)
+                # [(max_num_mentions, cands_per_mention) x exs] <=
+                #      (bsz, max_num_mentions=num_cand_mentions, cands_per_mention)
                 cand_scores.append(
                     top_cand_logits[idx][left_align_mask[idx]].data.cpu().numpy()
                 )
@@ -509,7 +537,8 @@ def _get_predictions(
     Returns:
         all_entity_preds,
         num_correct_weak, num_correct_strong, num_predicted, num_gold,
-        num_correct_weak_from_input_window, num_correct_strong_from_input_window, num_gold_from_input_window
+        num_correct_weak_from_input_window,
+            num_correct_strong_from_input_window, num_gold_from_input_window
     """
 
     # save biencoder predictions and print precision/recalls
@@ -553,8 +582,8 @@ def _get_predictions(
             scores = dists[i] if args.threshold_type == "joint" else cand_scores[i]
             cands_mask = scores[:, 0] == scores[:, 0]
             pred_entity_list = nns[i][cands_mask]
-            if len(pred_entity_list) > 0:
-                e_id = pred_entity_list[0]
+            # if len(pred_entity_list) > 0:
+            #    e_id = pred_entity_list[0]
             distances = scores[cands_mask]
             # (num_pred_mentions, 2)
             entity_mention_bounds_idx = pred_mention_bounds[i][cands_mask]
@@ -663,7 +692,7 @@ def run_elq(
     samples,
 ):
     assert args.save_preds_dir, "Need to specify args.save_preds_dir"
-    stopping_condition = False
+    # stopping_condition = False
     threshold = float(args.threshold)
     if args.threshold_type == "top_entity_by_mention":
         assert args.mention_threshold is not None
@@ -678,7 +707,7 @@ def run_elq(
         biencoder_params,
     )
 
-    stopping_condition = True
+    # stopping_condition = True
     # Prepare the data for biencoder
 
     # Original fxnality below, but since we're not careful to update the

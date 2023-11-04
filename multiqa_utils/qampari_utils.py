@@ -1,10 +1,11 @@
 import random
 
-## =============================================== ##
-## =============== Info Extractors =============== ##
-## =============================================== ##
+# # =============================================== # #
+# # =============== Info Extractors =============== # #
+# # =============================================== # #
 
 # --------- Original Data Format Extractors ---------- #
+
 
 def get_original_id(qdata):
     return qdata['qid']
@@ -13,20 +14,21 @@ def get_original_id(qdata):
 def get_question(qdata):
     return qdata['question_text']
 
+
 def get_question_type(qdata):
     if '_simple_' in qdata['qid']:
         return 'simple_multi'
     else:
         return 'complex_multi'
 
+
 def get_answer_sets(qdata):
     all_ans = []
     for adata in qdata['answer_list']:
-        all_ans.append(
-            list(set([adata['answer_text'], *adata['aliases']]))
-        )
+        all_ans.append(list(set([adata['answer_text'], *adata['aliases']])))
     possible_answer_sets = [all_ans]
     return possible_answer_sets
+
 
 # Notes:
 # - Multiple cases where the url doesn't match the ent text, ignore the url
@@ -37,8 +39,9 @@ def get_gt_ent_sets(qdata):
         ent_sets.add(frozenset([ed['entity_text'], *ed['aliases']]))
     return [list(fs) for fs in ent_sets]
 
+
 # Notes:
-# - All proofs have "found_in_url" which is of the form 
+# - All proofs have "found_in_url" which is of the form
 #   "https://en.wikipedia.org/wiki/<title>" so we could search with PageData
 #   and max substring overlap instead of BM25
 # - There are some duplicate proof texts, but all the (proof_text, found_in_url)
@@ -50,12 +53,12 @@ def get_proof_data(qdata, dtk, with_url=False):
     proof_data_by_answer = []
     for adata in qdata['answer_list']:
         if with_url:
-            dedup_proof_data = set([
-                (pd['proof_text'], pd['found_in_url']) for pd in adata['proof']
-            ])
-            proof_data_by_answer.append([
-                {'text': pd[0], 'found_in_url': pd[1]} for pd in dedup_proof_data
-            ])
+            dedup_proof_data = set(
+                [(pd['proof_text'], pd['found_in_url']) for pd in adata['proof']]
+            )
+            proof_data_by_answer.append(
+                [{'text': pd[0], 'found_in_url': pd[1]} for pd in dedup_proof_data]
+            )
         else:
             dedup_proof_data = set([pd['proof_text'] for pd in adata['proof']])
             proof_data_by_answer.append(list(dedup_proof_data))
@@ -98,6 +101,7 @@ def get_answer_aliases_urls_dict(qdata):
     return ans2urlalias
 
 
+"""  All of this is old.
 # ---- Proof Data ---- #
 
 
@@ -120,8 +124,8 @@ def get_proof_data_old(qdata):
                 {
                     "proof_url": proof_dict["found_in_url"],
                     "pid": proof_dict["pid"],
-                    "qid": get_id(qdata),
-                    "question": get_question(qdata),
+                    "qid": qdata['id'],
+                    "question": qdata['question'],
                     "all_answers": ans2urlalias,
                     "annotated_answer": answer,
                 }
@@ -167,11 +171,12 @@ def collect_proof_stats(qmp_data):
     )
     md["mentions_per_proof"] = [len(pd) for pd in proof_data_dict.values()]
     return md
+"""
 
 
-## =============================================== ##
-## ============= Dataset Processing  ============= ##
-## =============================================== ##
+# # =============================================== # #
+# # ============= Dataset Processing  ============= # #
+# # =============================================== # #
 
 # Takes a list of qampari data and uses the 'qid' value to
 #   produce lists of indices for each question type.
@@ -207,6 +212,11 @@ def random_sample_n_per_type(qtype_ind_list, n, verbose=True):
 
 
 # ---- DPR ---- #
+# TODO: impelment this if wwe want to use below
+def qmp_anslist_to_proof_data(ans_list):
+    assert False
+
+
 # TODO: separate metrics from calcs
 # TODO: find qmp_anslist_to_proof_data
 def qmp_data_to_dpr_format(qmp_data):
@@ -254,9 +264,9 @@ def qmp_data_to_dpr_format(qmp_data):
     return output_data, metadata
 
 
-## =============================================== ##
-## ========== QMP Specific Viz Utils ============= ##
-## =============================================== ##
+# # =============================================== # #
+# # ========== QMP Specific Viz Utils ============= # #
+# # =============================================== # #
 
 # TODO: Clearly this import method isn't good if we're going to use this.
 # so fix if we decide to use this
@@ -269,6 +279,7 @@ def get_elem_keylist(d, elem_keys):
 
 def print_data_header(data, answer_fxn=lambda k: k):
     import multiqa_utils.text_viz_utils as tvu
+
     question = get_elem_keylist(data, ["question", "question_text"])
     answers = [
         answer_fxn(a) for a in get_elem_keylist(data, ["answers", "answer_list"])
@@ -285,6 +296,7 @@ def print_data_header(data, answer_fxn=lambda k: k):
 
 def print_retrieval_data(data):
     import multiqa_utils.text_viz_utils as tvu
+
     print_data_header(data)
     for k, v in {
         "Len pos contexts": len(data["positive_ctxs"]),
@@ -305,6 +317,7 @@ def print_answer_data(
     width=100,
 ):
     import multiqa_utils.text_viz_utils as tvu
+
     print_data_header(data, answer_fxn)
     answers = data["answer_list"]
     print()

@@ -1,5 +1,3 @@
-import urllib
-import unicodedata
 import textwrap
 import re
 
@@ -59,11 +57,6 @@ def print_ctx(
     colored_title = color_text(ctx["title"], "green", answers)
     print(f"{ctx['score']:3.4f} | {colored_title}")
     print_wrapped(print_ctx, width)
-    for i, w in enumerate(wrapped):
-        if i == 0:
-            print(f"    >> {w}")
-        else:
-            print(f"       {w}")
 
 
 def get_answer_str(answers):

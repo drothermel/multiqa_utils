@@ -100,7 +100,7 @@ class StringKey:
     def save(self, force=False):
         assert self.last_save_next_sid <= self.next_sid
         if self.last_save_next_sid == self.next_sid and not force:
-            logging.info(f">> Latest version already saved")
+            logging.info(">> Latest version already saved")
             return
 
         save_dir = self.get_dir()
@@ -109,7 +109,7 @@ class StringKey:
         fu.dumppkl(self.str2sid, f"{save_dir}str2sid.pkl")
 
         self.sid2str = self.convert_trie_to_npy()
-        logging.info(f">> Rebuilt sid2str")
+        logging.info(">> Rebuilt sid2str")
         fu.dumpnpy(self.sid2str, f"{save_dir}sid2str.npy")
         self.last_save_next_sid = self.next_sid
         logging.info(f">> Finished saving string key: {self.name}")
@@ -312,7 +312,7 @@ class PassageData:
     def get_prep_title_from_title(self, title):
         if self.title2prep is not None:
             return self.title2prep.get(title, None)
-        
+
         if title not in self.title2pid:
             return None
         return self.page_data[self.title2pid[title]].prep_title
@@ -368,7 +368,7 @@ class SidNormer:
             f"{save_dir}nsid2sids.npy", mmm="r", verbose=False
         )
         return True
-    
+
     def load_to_memory(self):
         sid2nsid_mem = self.sid2nsid.tolist()
         self.sid2nsid = {i: s for i, s in enumerate(sid2nsid_mem)}
