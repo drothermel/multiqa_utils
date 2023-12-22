@@ -71,6 +71,7 @@ def get_all_norm_fxns(
         'l': lnorm,
         'lu': lunorm,
         'qnn': apply_qnn,
+        'qmp': qmp_norm,
         'prep': prep_norm,
         'prep_l': lambda st: apply_norms(st, [prep_norm, lnorm]),
         'prep_u': lambda st: apply_norms(st, [prep_norm, unorm]),

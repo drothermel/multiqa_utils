@@ -6,12 +6,15 @@ import logging
 import re
 import multiprocessing
 import html
+import itertools
 
 from utils.util_classes import Metrics
 import utils.file_utils as fu
 import utils.run_utils as ru
-from multiqa_utils.helper_classes import StringKey, PassageData, SidNormer, Ori2Ent
-import multiqa_utils.dpr_tokenizer_utils as tu
+from multiqa_utils.helper_classes import (
+    StringKey, PassageData, SidNormer, Ori2Ent, Int2ContigIdKey,
+)
+#import multiqa_utils.dpr_tokenizer_utils as tu
 import multiqa_utils.string_utils as su
 
 # ##################################
@@ -55,30 +58,74 @@ def postprocess_wikipedia_segment_to_page_index(infile, outfile, verbose=True):
 # #    Extract Wiki Graph Data    ##
 # ##################################
 
+
+
+# su.get_all_norm_fxns()
+class WikidataMapper:
+    def __init__():
+        # Needed for Graph Building
+        #  - all_str_key => qent_strs to sid to use to query the graph
+        #  - title_sids
+        #  - ref_sids
+        #  - norm2sids: {norm_str: matching_sids}
+        #       => used to build the graph
+        # Needed for CF
+        #  - 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # # ---- Path Builder Utils ---- # #
 
 
+def get_data_path(cfg, struct_type, data_type):
+    if struct_type == 'graphs':
+        return get_graph_data_path(cfg, data_type[0], data_type[1])
+    if struct_type == 'sid_sets':
+        return get_set_data_path(cfg, data_type[0], data_type[1])
+    if struct_type == 'norm2sids':
+        return get_norm2sids_path(cfg, data_type[0], data_type[1])
+    if struct_type == 'ori2entdetailed':
+        return get_ori2entdetailed_path(cfg, data_type[0], data_type[1])
+    assert False
+
+
 def get_graph_data_path(cfg, graph_type, data_type):
-    assert graph_type in cfg.wiki_processing.graph_types
-    assert data_type in cfg.wiki_processing.graphs
+    assert graph_type in cfg.wiki_processing.all_types.graph_types
+    assert data_type in cfg.wiki_processing.all_types.graphs
     return f"{cfg.postp_dir}{graph_type}__{data_type}.pkl"
 
 
 def get_set_data_path(cfg, graph_type, set_type):
-    assert graph_type in cfg.wiki_processing.graph_types
-    assert set_type in cfg.wiki_processing.sets
+    assert graph_type in cfg.wiki_processing.all_types.graph_types
+    assert set_type in cfg.wiki_processing.all_types.sets
     return f"{cfg.postp_dir}{graph_type}__{set_type}_set.pkl"
 
 
 def get_norm2sids_path(cfg, graph_type, norm_type):
-    assert graph_type in cfg.wiki_processing.graph_types
-    assert norm_type in cfg.wiki_processing.norm_types
+    assert graph_type in cfg.wiki_processing.all_types.graph_types
+    assert norm_type in cfg.wiki_processing.all_types.norms
     return f"{cfg.postp_dir}{graph_type}__{norm_type}_norm2sids.pkl"
 
 
 def get_ori2entdetailed_path(cfg, graph_type, str_ent_type):
-    assert graph_type in cfg.wiki_processing.graph_types
-    assert str_ent_type in cfg.wiki_processing.str_ent_types
+    assert graph_type in cfg.wiki_processing.all_types.graph_types
+    assert str_ent_type in cfg.wiki_processing.all_types.str_ents
     return f"{cfg.postp_dir}{graph_type}__ori2entdetailed_{str_ent_type}.pkl"
 
 
@@ -93,20 +140,144 @@ def get_all_mapped_files(cfg):
 
 # # ---- Loaders ---- # #
 
+# Update curr_structs by loading or updating all struct types based on input
+# needed struct dict
+# stucts_needed = {struct_type: kwargs}
+# e.g. {'sid_sets': {'graph_set_types': 'all'}}
+# e.g. {'sid_sets': {'graph_set_types': [(graph_type, 'title'), (graph_type, 'prep_title')]}}
 
-def load_sid_sets(cfg, graph_types=None, set_types=None):
-    if graph_types is None or len(graph_types) == 0:
-        graph_types = cfg.wiki_processing.graph_types
-    if set_types is None or len(set_types) == 0:
-        set_types = cfg.wiki_processing.sets
+def load_update_structs(cfg, structs_needed, curr_structs):
+    curr_struct_types = list(curr_structs.keys())
+    logging.info(">> Clear old data:")
+    for struct_type in curr_struct_types:
+        # Case 1: Struct not needed, delete
+        if struct_type not in structs_needed:
+            logging.info(f">>  - remove: {struct_type}")
+            del curr_structs[struct_type]
 
-    sid_sets = {}
-    for graph_t in graph_types:
-        sid_sets[graph_t] = {}
-        for set_t in set_types:
-            set_path = get_norm2sids_path(cfg, graph_t, set_t)
-            sid_sets[graph_t][set_t] = fu.load_file(set_path)
-    return sid_sets
+    logging.info(">> Loading/Updating all data:")
+    for struct_type, kwargs in structs_needed.items():
+        if struct_type in curr_structs:
+            old_kwargs = curr_structs[struct_type]['kwargs']
+            # Case 2: No changes needed, keep
+            if old_kwargs == kwargs:
+                logging.info(f">>  - keep: {struct_type} {kwargs}")
+                continue
+            # Case 3: Updates needed, update
+            else:
+                logging.info(f">>  - update: {struct_type} {kwargs}")
+                load_update_struct(
+                    cfg,
+                    struct_type,
+                    curr_structs,
+                    kwargs=kwargs,
+                )
+        # Case 4: New struct needed, load
+        else:
+            logging.info(f">> - loading {struct_type} {kwargs}")
+            curr_structs[struct_type] = {
+                'data': load_struct(cfg, struct_type, kwargs=kwargs),
+                'kwargs': kwargs,
+            }
+
+
+
+def get_all_combs(cfg, key_list):
+    all_lists = [cfg.wiki_processing.all_types[k] for k in key_list]
+    return itertools.product(*all_lists)
+
+
+# TODO: I think this wouldn't work for all_str_key or the like
+# Update curr_structs by loading or updating a specific struct type
+def load_update_struct(
+    cfg,
+    struct_type,
+    curr_structs,
+    kwargs={},
+):
+    # Get needed types from args and cfg
+    loading_cfg = cfg.wiki_processing.struct_loading
+    needed_types = kwargs.get(loading_cfg[struct_type]['type_key'], 'all')
+    if needed_types == 'all':
+        needed_types = get_all_combs(cfg, loading_cfg[struct_type]['type_list'])
+    needed_types = set(needed_types)
+
+    # Cleanup curr_structs first
+    if struct_type in curr_structs:
+        old_types_set = set(curr_structs[struct_type]['data'].keys())
+        remove_types = old_types_set - needed_types
+        for remove_t in remove_types:
+            logging.info(f">>  - remove {struct_type} {remove_t}")
+            del curr_structs[struct_type]['data'][remove_t]
+
+        # Only load new graph_sets
+        needed_types = needed_types - old_types_set
+
+    # Load the struct
+    new_data = load_struct(cfg, struct_type, kwargs=kwargs)
+    # Update curr_structs
+    if struct_type in curr_structs:
+        curr_structs[struct_type]['data'].update(new_data)
+        curr_structs[struct_type]['kwargs'] = kwargs
+    else:
+        curr_structs[struct_type] = {
+            'data': new_data,
+            'kwargs': kwargs,
+        }
+
+
+# Directly load and return a given struct based on arguments
+def load_struct(cfg, struct_type, kwargs={}):
+    logging.info(f">> Loading {struct_type}")
+    if struct_type == 'all_str_key':
+        return StringKey(
+            data_dir=cfg.wiki_processing.string_key.dir,
+            name=cfg.wiki_processing.string_key.all_key_name,
+            **kwargs,
+        )
+
+    if struct_type == 'qnn_str_key':
+        return StringKey(
+            data_dir=cfg.wiki_processing.string_key.dir,
+            name=cfg.wiki_processing.string_key.qnn_key_name,
+            **kwargs,
+        )
+
+    if struct_type == 'passage_data':
+        return PassageData(
+            data_dir=cfg.wiki_processing.passage_data.dir,
+            name=cfg.wiki_processing.passage_data.name,
+            **kwargs,
+        )
+
+    if struct_type == 'sid_normer':
+        sid_normer = SidNormer(
+            data_dir=cfg.wiki_processing.sid_normer.dir,
+            name=cfg.wiki_processing.sid_normer.name,
+        )
+        if kwargs.get('load_to_memory', False):
+            sid_normer.load_to_memory()
+        return sid_normer
+
+    if struct_type in ['sid_sets', 'graphs', 'norm2sids']:
+        struct_loading_cfg = cfg.wiki_processing.struct_loading
+        return load_complex_struct(
+            cfg,
+            struct_type,
+            types=kwargs.get(struct_loading_cfg[struct_type]['type_key'], 'all'),
+        )
+
+
+def load_complex_struct(cfg, struct_type, types='all'):
+    struct_loading_cfg = cfg.wiki_processing.struct_loading
+    if types == 'all':
+        types = get_all_combs(cfg, struct_loading_cfg[struct_type]['type_list'])
+
+    data = {}
+    for data_type in types:
+        data_path = get_data_path(cfg, struct_type, data_type)
+        data[data_type] = fu.load_file(data_path)
+    return data
 
 
 # # ---- Key Parsing ---- # #
@@ -119,6 +290,116 @@ def get_norm_bool_from_ent_str_type(ent_str_type):
 
 
 # # --------- Postprocess Wikipedia v2 ----------# #
+
+# # --------- v2: More Processing Functions -----# #
+def make_tsid_id_key(cfg, graph_type, title_sid_set, prep_title_sid_set):
+    id_key = Int2ContigIdKey(
+        data_dir=cfg.postp_datastruct_dir,
+        name=f'tsid_idkey__{graph_type}',
+        building=True,
+    )
+    # First add title sids
+    for tsid in title_sid_set:
+        id_key.add_val(tsid)
+    id_key.metadata['last_title_id'] = id_key.last_elem_id()
+
+    # Then add prep_title sids that aren't title sids
+    for ptsid in (prep_title_sid_set - title_sid_set):
+        id_key.add_val(ptsid)
+
+    # And finally save the id_key
+    id_key.save()
+
+def make_rsid_id_key(cfg, graph_type, ref_sid_set):
+    id_key = Int2ContigIdKey(
+        data_dir=cfg.postp_datastruct_dir,
+        name=f'rsid_idkey__{graph_type}',
+        building=True,
+    )
+    for rsid in ref_sid_set:
+        id_key.add_val(rsid)
+    id_key.save()
+
+def make_osid_id_key(
+    cfg,
+    graph_type,
+    title_sid_set,
+    prep_title_sid_set,
+    ref_sid_set,
+    ori_str_sid_set,
+):
+    id_key = Int2ContigIdKey(
+        data_dir=cfg.postp_datastruct_dir,
+        name=f'osid_idkey__{graph_type}',
+        building=True,
+    )
+    new_md = {}
+
+    # First add the titles, like in tsid
+    for tsid in title_sid_set:
+        id_key.add_val(tsid)
+    new_md['last_title_id'] = id_key.last_elem_id()
+
+    # Then add the new prep_titles
+    for ptsid in (prep_title_sid_set - title_sid_set):
+        id_key.add_val(ptsid)
+    new_md['last_prep_title_id'] = id_key.last_elem_id()
+
+    refs_not_titles = ref_sid_set - prep_title_sid_set - title_sid_set
+    # Then add ori_text that are also ref ents
+    for rsid in (ori_str_sid_set & refs_not_titles):
+        id_key.add_val(rsid)
+    new_md['last_ref_id'] = id_key.last_elem_id()
+
+    # And finally, ori_text that aren't ents of any kind
+    for osid in ori_str_sid_set:
+        id_key.add_val(osid, allow_repeat=True)
+
+    # Update the metadata
+    id_key.metadata.update(new_md)
+
+    # And save
+    id_key.save()
+
+
+def sets_to_subset_idkeys(cfg, sid_sets):
+    logging.info(">> Converting sets to subset id keys")
+    all_types = cfg.wiki_processing.all_types
+    for graph_type in all_types.graph_types:
+        logging.info(f">> Loading sid sets for {graph_type}")
+        title_sid_set = sid_sets[(graph_type, 'title')]
+        prep_title_sid_set = sid_sets[(graph_type, 'prep_title')]
+        ref_sid_set = sid_sets[(graph_type, 'linked_entity')]
+        ori_str_sid_set = sid_sets[(graph_type, 'ori_text')]
+
+        logging.info(">>    begin making id keys")
+        make_tsid_id_key(cfg, graph_type, title_sid_set, prep_title_sid_set)
+        make_rsid_id_key(cfg, graph_type, ref_sid_set)
+        make_osid_id_key(
+            cfg,
+            graph_type,
+            title_sid_set,
+            prep_title_sid_set,
+            ref_sid_set,
+            ori_str_sid_set,
+        )
+
+def sets_to_norm_str_key_and_sid_normer(
+    cfg, sids_sets, norm_type, graph_type,
+):
+
+
+def reduce_elem_to_sid_str_key(cfg, sid_str_key, str_sets, graph_type):
+    """ Cant do this here because this is just for one part
+    sid_str_key = hyd.instantiate(
+        cfg.wiki_processing.str_keys.sid,
+        extra_metadata={'graph_type': graph_type},
+        building=True,
+    )
+    """
+    for set_name, str_set in str_sets[graph_type].items():
+        
+    
 
 # # --------- v2: Reducing Functions ----------# #
 def mapped_wiki_into_passage_data(passage_data, mapped_passage_data_input):
@@ -154,8 +435,6 @@ def mapped_wiki_into_strkey(str_key, mapped_sets):
 
 
 def mapped_wiki_into_sidsets(cfg, str_key, sid_sets, mapped_sets):
-    # Note we're using tags and links only because it is a superset of the
-    # strings that appear in each graph
     for graph_type, graph_sets in mapped_sets.items():
         if graph_type not in sid_sets:
             sid_sets[graph_type] = {}
@@ -246,7 +525,8 @@ def reducing__pagedata_strkeys_sidsets_sidnormer(cfg, test=False):
 
 
 def reducing__sets(
-    cfg, all_str_key,
+    cfg,
+    all_str_key,
     return_struct=False,
     test=False,
 ):
@@ -275,7 +555,7 @@ def reducing__sets(
             if test:
                 logging.info(">> Running in test mode, don't dump")
                 continue
-            fu.dumppkl(data, out_path)
+            fu.dumppkl(data, out_path, verbose=False)
 
     logging.info("")
     logging.info(">> Finished reducing sets")
@@ -367,7 +647,7 @@ def reducing__norm2sids(
 
             outpath = get_norm2sids_path(cfg, graph_t, norm_t)
             if not test:
-                fu.dumppkl(dict(norm2sids), outpath)
+                fu.dumppkl(dict(norm2sids), outpath, verbose=False)
             else:
                 logging.info(">> Running in test mode, don't dump")
 

@@ -58,6 +58,12 @@ def get_base_data_path(cfg, dataset, split, raw=False):
         return f"{data_dir}{dataset}_{split}_data.jsonl"
 
 
+def get_annotated_data_path(cfg, dataset, split, annotation):
+    data_dir = cfg.postp_data_dir
+    return f"{data_dir}{dataset}_{split}_{annotation}_data.jsonl"
+    
+
+
 def get_linked_data_path(cfg, dataset, split, link_type, raw=False):
     if raw:
         if link_type in ['elq_ent', 'elq_ori_str']:
@@ -116,13 +122,17 @@ def get_data(
     cfg,
     data_type,
     link_type=None,
+    annotation=None,
     raw=False,
     as_dict=False,
     verbose=False,
 ):
     dataset_name, split = data_type_to_name_split(data_type)
     if link_type is None:
-        path = get_base_data_path(cfg, dataset_name, split, raw=raw)
+        if annotation is None:
+            path = get_base_data_path(cfg, dataset_name, split, raw=raw)
+        else:
+            path = get_annotated_data_path(cfg, dataset_name, split, annotation=annotation)
     else:
         path = get_linked_data_path(cfg, dataset_name, split, link_type, raw=raw)
 
@@ -131,6 +141,24 @@ def get_data(
         return {d["id"]: d for d in data}
     elif as_dict and raw:
         print(">> Cannot make raw data into a dict, returning a list")
+    return data
+
+
+# {data_t: {split_t: {link_type: {id: entity_link_data, ...}}}
+def load_all_entity_linked_data(cfg):
+    data = {}
+    for data_name in cfg.datasets.run_datasets:
+        data[data_name] = {}
+        for split in cfg.datasets.run_splits:
+            data[data_name][split] = {}
+            for link_t in cfg.entity_linking.all_link_types:
+                data[data_name][split][link_t] = get_data(
+                    cfg,
+                    get_data_type(data_name, split),
+                    link_type=link_t,
+                    raw=False,
+                    as_dict=True,
+                )
     return data
 
 
