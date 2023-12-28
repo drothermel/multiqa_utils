@@ -1,5 +1,6 @@
 import re
 import string
+from pygtrie import CharTrie
 import regex
 import urllib
 import unicodedata
@@ -45,6 +46,20 @@ def longest_common_substring(x: str, y: str) -> (int, int, int):
     # returning the maximum of all the subproblems
     return max(digonal_computation(), key=itemgetter(0), default=(0, 0, 0))
 
+def find_span_indices_in_passage(passage, spans):
+    trie = CharTrie()
+    for span in spans:
+        trie[span] = []
+
+    for i in range(len(passage)):
+        node, j = trie.longest_prefix(passage[i:])
+        if node is not None and node.key in trie:
+            trie[node.key].append(i)
+
+    # Convert the trie values back to a regular dictionary for output
+    span_indices = {span: trie[span] for span in spans}
+    return span_indices
+
 
 # ---------- Normalization Utils ----------- #
 
@@ -57,26 +72,17 @@ def apply_norms(ori_str, norm_fxns):
     return normed_str
 
 
-def get_all_norm_fxns(
-    all_str_key=None,
-    sid_normer=None,
-    qnn_str_key=None,
-):
-    def apply_qnn(st):
-        return qnn_norm(dtk, st, all_str_key, sid_normer, qnn_str_key)
+def get_all_norm_fxns():
     dtk = get_detokenizer()
     # matches types in cfg.wiki_processing.norm_types
     norm_fxns = {
-        'u': unorm,
         'l': lnorm,
-        'lu': lunorm,
-        'qnn': apply_qnn,
-        'qmp': qmp_norm,
+        'qnn': qmp_norm,
         'prep': prep_norm,
+        'qnn_l': lambda st: apply_norm(st, [lnorm, qnn]),
         'prep_l': lambda st: apply_norms(st, [prep_norm, lnorm]),
-        'prep_u': lambda st: apply_norms(st, [prep_norm, unorm]),
-        'prep_lu': lambda st: apply_norms(st, [prep_norm, lunorm]),
         'prep_qnn': lambda st: apply_norms(st, [prep_norm, apply_qnn])
+        'prep_qnn_l': lambda st: apply_norms(st, [prep_norm, apply_qnn, lnorm])
     }
     return norm_fxns
 

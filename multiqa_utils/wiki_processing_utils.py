@@ -1,3 +1,5 @@
+from nltk.tokenize import word_tokenize, sent_tokenize
+from nltk.data import load
 import os
 
 # Used for processing new wiki dump
@@ -5,12 +7,43 @@ import re
 import html
 
 from utils.parallel_utils import FileProcessor
+import multiqa_utils.string_utils as su
 
+
+def flatten_list_of_lists(list_of_lists):
+        return [l for sublist in list_of_list for l in sublist]
+
+def merge_into_dict(dict1, dict2):
+    for key, val_col2 in dict2.items():
+        if key in dict1:
+            dict1[key].update(val_col2)
+        else:
+            dict1[key] = val_col2
+
+def sum_into_dict(dict1, dict2):
+    for k, v2 in dict2.items():
+        if k not in dict1:
+            dict1[k] = v2
+        else:
+            dict1[k] += v2
+    
 
 class WikiChunker(FileProcessor):
     def __init__(cfg):
         self.cfg = cfg
-        self.chunked_dir = cfg.wiki_processing.wiki_chunked_dir
+        self.norm_chunks = cfg.wiki_processing.norm_chunks
+        if self.norm_chunks:
+            self.chunked_dir = cfg.wiki_processing.wiki_normed_chunked_dir
+        else:
+            self.chunked_dir = cfg.wiki_processing.wiki_chunked_dir
+
+        self.raw_keys = cfg.wiki_processing.raw_keys
+        self.target_words = cfg.wiki_processing.chunk_target_word_len
+        self.max_words = cfg.wiki_processing.chunk_max_word_len
+        # Unused, but might be needed for word_tokenize and sent_tokenize to work
+        self.tokenizer = load(f"tokenizers/punkt/english.pickle")
+        self.detokenizer = su.get_detokenizer()
+
         super().__init__(
             cfg.wiki_processing.num_threads,
             cfg.wiki_processing.num_procs,
@@ -19,59 +52,371 @@ class WikiChunker(FileProcessor):
         )
 
     def get_output_from_inpath(self, file_path):
-        
-
-
-    def get_chunked_filepath(init_filepath):
         # basepath/AA/wiki_00
         init_name = fu.get_file_from_path(init_filepath)
         init_dir = fu.get_dir_from_path(init_filepath)
-        sub_dirname = init_dir.split(os.path.sep)
+        sub_dirname = init_dir.split(os.path.sep)[-1]
         return os.path.join(self.chunked_dir, f'{sub_dirname}_{init_name}.pkl')
+
+    # Necessary bc orig files are just "wiki_00" not "wiki_00.jsonl"
+    def load_file(self, file_path):
+        return fu.load_file(file_path, ending='jsonl')
+
+    # Output list of pages within a fine, with lists of chunks for each page
+    def merge_results(self, file_output_list):
+        return flatten_list_of_lists(file_output_list)
+
+    # CPU intensive task: chunking and tag/link matching
+    def process_batch_elem(self, item):
+        def check_valid(st):
+            return st is not None and len(st) != 0
+
+        # Clean up the text and move it to a "text" key
+        fixed_page_data = self._fix_parsed_wiki_text(item)
+        if len(fixed_page_data['text']) == 0:
+            continue
+
+	# Get the spans and norm spans for all span types: 'links' and 'tags'
+        span_ent_lists = {}
+        for link_type in ['tags', 'links']:
+            wiki_key = self.raw_keys[link_type].wiki
+            span_ents = self._span_ent_raw_input(fixed_page_data[wiki_key], link_type)
+            if not self.norm_chunks:
+                span_ent_lists[link_type] = span_ents
+                continue
+
+            # Apply normalization (link norm, basic normalization, some leftover
+            # things from html)
+            norm_span_ents = []
+            for span_ent in span_ents:
+                norm_span_ent = {}
+                span = span_ent['span']
+                ent = span_ent['ent']
+                if link_type == 'links':
+                    span = su.link_norm(span)
+                    ent = su.link_norm(ent)
+                    if not (check_valid(span) and check_valid(ent)):
+                        continue
+                ns = su.normalize(self.detokenizer, span)
+                ne = su.normalize(self.detokenizer, ent)
+                if not (check_valid(ns) and check_valid(ne)):
+                    continue
+                ns = ns.replace("&quot;", '"').replace("&amp;", "&")
+                ne = ne.replace("&quot;", '"').replace("&amp;", "&")
+                if ns in ['"', '&'] or ne in ['"', '&']:
+                    continue
+                norm_span_ents.append({'span': ns, 'ent': ne})
+            span_ent_lists[link_type] = norm_span_ents
+
+        # Get the span indices in each case
+        passage = fixed_page_data['text']
+        title = fixed_page_data['title']
+        if self.norm_chunks:
+            passage = su.normalize(self.detokenizer, passage)
+            title = su.normalize(self.detokenizer, title)
+        chunks = self._chunk_and_combine_passage(passage, span_ent_lists)
+
+        # Already have 'tags' and 'links' in each chunk
+        for chunk_id, chunk in enumerate(chunks):
+            chunk['page_id'] = int(fixed_page_data['id'])
+            chunk['title'] = title
+            chunk['chunk_id'] = chunk_id
+            chunk['contents'] = passage
+        return chunks
+
+    # Used for linking ent and span to chunks
+    def _span_ent_raw_input(in_list, link_type):
+        span_ents = []
+        for link_info in link_list:
+            span = link_info[self.raw_keys[link_type].span]
+            ent = link_info[self.raw_keys[link_type].ent]
+            if span is None or ent is None:
+                continue
+            span = span.strip()
+            ent = ent.strip()
+            if len(span) == 0 or len(ent) == 0 or span in {"gt", "S &gt"}:
+                continue
+            span_ents.append({'span': span, 'ent': ent})
+        return span_ents
+            
+
+    # Used for cleaning wiki text before chunking, from qampari github
+    # DataCreation/DataAlginment/utils/alignment_utils.py
+    def _fix_parsed_wiki_text(sample):
+        text_splits = sample["clean_text"].split("&gt;")
+        test_splits_new = [
+            text_splits[i].replace("&lt;/a", "")
+            if i % 2 == 1
+            else text_splits[i].split("&lt;a")[0]
+            for i in range(len(text_splits))
+        ]
+        text_new = " ".join(test_splits_new)
+        sample["text"] = text_new
+        return sample
+
+    def _chunk_and_combine_passage(self, passage, span_ent_lists):
+        all_spans = flatten_list_of_lists(
+            [[se['span'] for se in sel] for sel in span_ent_lists.values()]
+        )
+        span_indices = su.find_span_indices_in_passage(passage, all_spans)
+	sentences = sent_tokenize(passage)
+	chunks = self._combine_sentences_into_chunks(sentences)
+	chunks = self._associate_spans_with_chunks(
+            chunks, span_indices, span_ent_lists
+        )
+        return chunks
+
+    def _combine_sentences_into_chunks(self, sentences):
+        chunks = []
+        current_chunk = []
+        current_word_count = 0
+        chunk_start = 0
+
+        def finalize_current_chunk():
+            nonlocal current_chunk, chunk_start, current_word_count
+            chunk_end = chunk_start + len(' '.join(current_chunk))
+            chunks.append((chunk_start, chunk_end, ' '.join(current_chunk)))
+            chunk_start = chunk_end + 1
+            current_chunk = []
+            current_word_count = 0
+
+        for sentence in sentences:
+            sentence_words = word_tokenize(sentence)
+            if len(sentence_words) > self.max_words:
+                # Split a long sentence into smaller parts
+                for word in sentence_words:
+                    if current_word_count >= self.max_words:
+                        finalize_current_chunk()
+                    current_chunk.append(word)
+                    current_word_count += 1
+            else:
+                # Handle normal sentences
+                if current_word_count + len(sentence_words) > self.max_words:
+                    finalize_current_chunk()
+
+                current_chunk.append(sentence)
+                current_word_count += len(sentence_words)
+
+                if current_word_count >= self.target_words:
+                    finalize_current_chunk()
+
+        if current_chunk:
+            finalize_current_chunk()
+
+        return chunks
+
+    def _associate_spans_with_chunks(self, chunks, span_indices, span_type_to_spans_dict):
+	chunk_data = []
+	for chunk_start, chunk_end, chunk_text in chunks:
+            curr_data = {'content': chunk_text}
+            curr_data.update({span_type: [] for span_type in span_type_to_spans_dict}
+	    for span_type, spans in span_type_to_spans_dict.items():
+		for span, span_id in spans:
+		    for index in span_indices.get(span, []):
+			if chunk_start <= index < chunk_end:
+                            new_index = index - chunk_start
+                            span_length = len(span)
+                            curr_data[span_type].append({
+                                'span': span,
+                                'ent': span_id,
+                                'start_ind': new_index,
+                                'end_ind': new_index + span_length,
+                            })
+	    chunk_data.append(curr_data)
+	return chunk_data
+
+class WikiMapper(FileProcessor):
+    def __init__(cfg):
+        self.cfg = cfg
+        self.chunk_key = cfg.wiki_processing.map_chunk_key
+        self.graph_type = cfg.wiki_processing.graph_type
+        self.chunked_dir = cfg.wiki_processing.wiki_chunked_dir
+        self.mapped_dir = cfg.wiki_processing.wiki_mapped_dir
+        self.tokenizer = tu.initialize_tokenizer(
+            cfg.tokenizer_config_path, # TODO: This doesn't work yet
+        )
+
+        super().__init__(
+            cfg.wiki_processing.num_threads,
+            cfg.wiki_processing.num_procs,
+            cfg.wiki_processing.proc_batch_size,
+            skip_exists=cfg.wiki_processing.skip_exists,
+        )
+
+    def get_output_from_inpath(self, file_path):
+        # chunked_dir/AA_wiki_00.pkl
+        init_name = fu.get_file_from_path(init_filepath)
+        name = f'{self.chunk_key}_{self.graph_type}_{init_name}'
+        return os.path.join(self.mapped_dir, name)
+
+    # Item is a single chunk info dict
+    def process_batch_elem(self, item):
+        chunk = item
+        mapped_chunk = {}
+        # Get the link types to use
+        link_types = ['tags']
+        if self.graph_type == 'tags_and_links':
+            link_types.append('links')
+
+        # Get the token info
+        token_info = self._get_token_info(chunk, link_types)
+
+        cid = (chunk['page_id'], chunk['chunk_num'])
+        # Build sets and graphs
+        sets = {'spans': set(), 'ents': set()}
+        graphs = {
+            'span2ents': defaultdict(set),
+            'ref_ent2cids': defaultdict(set),
+            'ref_span2cids': defaultdict(set),
+            'cid2children': defaultdict(set),
+            'span2entdetailed': defaultdict(dict),
+        }
+        for link_type in link_types:
+            for span, ent in chunk[link_type]:
+                sets['spans'].add(span)
+                sets['ents'].add(ent)
+                graphs['span2ents'][span].add(ent)
+                graphs['ref_ent2cids'][ent].add(cid)
+                graphs['ref_span2cids'][span].add(cid)
+                graphs['cid2children'][cid].add((span, ent))
+                if cid not in graphs['span2entdetailed'][span]:
+                    graphs['span2entdetailed'][span][cid] = {ent: 1}
+                elif ent not in graphs['span2entdetailed'][span][cid]:
+                    graphs['span2entdetailed'][span][cid][ent] = 1
+                else:
+                    graphs['span2entdetailed'][span][cid][ent] += 1
+
+        # Create str2nstr
+        base_str_set = set([title]) | sets['spans'] | sets['ents']
+        str2nstr = {}
+        for norm_type, norm_fxn in su.get_all_norm_fxns().items():
+            str2nstr[norm_type] = {st: norm_fxn(st) for st in base_str_set}
+
+        mapped_chunk = {
+            **chunk,
+            'cid': cid,
+            'sets': sets,
+            'graphs': graphs,
+            'token_info': token_info,
+            'str2nstr': str2nstr,
+        }
+        return mapped_chunk
+        
+
+    # This is where we combine any shared structures
+    def merge_results(self, file_output_list):
+        processed_chunks = file_output_list
+
+        # Merge token data
+        cid2tokeninfo = {
+            (pc['pid'], pc['chunk_num']): pc['token_info'] for pc in processed_chunks
+        }
+
+        # Merge norm data
+        str2nstr = {k: {} for k in processed_chunks[0]['str2nstr'].keys()}
+        for pc in processed_chunks:
+            for norm_type, s2ns in pc['str2nstr'].items():
+                str2nstr[norm_type].update(s2ns)
+
+        # Merge page data
+        pid2chunk2passage = defaultdict(dict)
+        pid2title = {}
+        for pc in processed_chunks:
+            pid2chunk2passage[pc['pid']][pc['chunk_num']] = pc['content']
+            pid2title[pc['pid']] = pc['title']
+
+        # Merge sets and graphs, build some new ones
+        sets = {k: set() for k in pc['sets'].keys()}
+        sets['titles'] = set()
+        graphs = {k: {} for k in pc['graphs'].keys()}
+        graphs['title_ent2cids'] = defaultdict(set)
+        for pc in processed_chunks:
+            sets['titles'].add(pc['title'])
+            sets['spans'].update(pc['sets']['spans'])
+            sets['ents'].update(pc['sets']['ents'])
+
+            for gk in ['span2ents', 'ref_ent2cids', 'ref_span2cids', 'cid2children']:
+                merge_into_dict(graphs[gk], pc['graphs'][gk])
+            merge_span2entdetailed(graphs['span2entdetailed'], pc['graphs']['span2entdetailed'])
+
+            graphs['title_ent2cids'][chunk['title']].append(pc['cid'])
+        mapped_data = {
+            'pid2chunk2passage': dict(pid2chunk2passage),
+            'pid2title': pid2title,
+            'sets': sets,
+            'graphs': {k: dict(v) for k, v in graphs.items()},
+            'cid2tokeninfo': cid2tokeninfo,
+            'str2nstr': str2nstr,
+        }
+        return mapped_data
+
+
+    def _get_token_info(self, chunk, link_types):
+        title = chunk['title']
+        contents = chunk['contents']
+
+        title_toks = self.tokenizer.encode(title, add_special_tokens=False)
+        encoded_w_offsets = self.tokenizer.encode(
+            contents,
+            add_special_tokens=False,
+            return_offsets_mapping=True
+        )
+        token_info = {
+            'title_toks': title_toks,
+            'title_span_inds': (0, len(title)),
+            'title_tok_inds': (0, len(title_toks)),
+            'content_toks': encoded_w_offsets.ids,
+        }
+        spans = flatten_list_of_lists([chunk[lt] for lt in link_types])
+        token_info['spans_w_tok_inds'] = self._find_token_ranges(
+            passage, encoded_w_offsets, spans,
+        )
+        return token_info
+
+    def _find_token_ranges(self, passage, encoded_w_offsets, spans):
+        # Tokenize the passage and get a mapping of token indices to character ranges
+        char_to_token = [None] * len(passage)
+        for token_ind, (start_char, end_char) in enumerate(encoded_w_offsets.offset_mapping):
+            for char_ind in range(start_char, end_char):
+                char_to_token[char_ind] = token_ind
+
+        # Update each span with token indices
+        updated_spans = []
+        for span in spans:
+            start_char_ind = span['start_ind']
+            end_char_ind = span['end_ind'] - 1  # Adjust to be inclusive
+
+            start_token_ind = char_to_token[start_char_ind]
+            end_token_ind = char_to_token[end_char_ind]
+
+            updated_spans.append({
+                'span': span['span'],
+                'ent': span['ent'],
+                'span_inds': (start_char_ind, end_char_ind + 1),  # Make end index exclusive again
+                'tok_inds': (start_token_ind, end_token_ind + 1)  # Make end index exclusive
+            })
+
+        return updated_spans
+
+    def _merge_span2entdetailed(self, dict1, dict2):
+        for key, subdict in dict2.items(): # span: {cid: ent: int}
+            if key not in dict1: # span
+                dict1[key] = subdict
+                continue
+
+            for kk, subsubdict in subdict.items(): # cid: {ent: int}
+                if kk not in dict1[key]: # cid
+                    dict1[key][kk] = subsubdict
+                    continue
+
+                # merge {ent: int} with {ent: int}
+                sum_into_dict(dict1[key][kk], subsubdict)
+
+
+
     
 
-    def _chunk_wiki_file(self, filepath):
-        
-        
 
-# Pool fxn for an input file list
-# Chunk one original wiki file per process
-def chunk_wiki_files(input_files, output_dir, num_procs):
-    os.makedirs(output_dir, exist_ok=True)
-    fxn_args_list = list(zip(input_files, repeat(output_dir)))
-    ru.apply_pool(get_chunks, fxn_args_list, len(input_files), processes=num_procs)
-
-# From qampari github
-# DataCreation/DataAlginment/utils/alignment_utils.py
-def fix_parsed_wiki_text(sample):
-    text_splits = sample["clean_text"].split("&gt;")
-    test_splits_new = [
-        text_splits[i].replace("&lt;/a", "")
-        if i % 2 == 1
-        else text_splits[i].split("&lt;a")[0]
-        for i in range(len(text_splits))
-    ]
-    text_new = " ".join(test_splits_new)
-    sample["text"] = text_new
-    return sample
-
-# From qampari github
-# Pulled from DataCreation/DataAlginment/utils/alignment_utils.py
-def read_parsed_wikipedia(input_file):
-    total_data = list()
-    with open(input_file, "r") as f:
-        for line in f.readlines():
-            curr_data = json.loads(line.strip())
-            total_data.append(fix_text(curr_data))
-    return total_data
-
-# TODO: get rid of this
-# From qampari github
-def _read_parsed_wiki(file_path):
-    dump = read_parsed_wikipedia(file_path)
-    for el in dump:
-        el["file_path"] = file_path
-        yield el
 
 
 # # ---- Old Mapper & Reducer Fxns ---- # #
@@ -388,357 +733,6 @@ def reducing__ori2entdetailed(
 # # --------- v2: Mapping Functions ----------# #
 
 
-def get_inds_in_chunk(chunk, strs, cid=None):
-    str_to_inds = {}
-    for st in strs:
-        try:
-            for m in re.finditer(re.escape(st), chunk):
-                if st not in str_to_inds:
-                    str_to_inds[st] = []
-                str_to_inds[st].append((m.start(), m.end()))
-        except:  # noqa: E722
-            logging.info(f">> ERROR in re: {cid} {st} {chunk}")
-            continue
-    return str_to_inds
-
-
-# Need: str: (str_range, tok_range, ent)
-# Assume chunk does not contain title and that they'll be
-# concatenated with a [SEP] token
-def get_token_inds(tokenizer, title, chunk, strs, prep_title=None, cid=None):
-    tok_data = {}
-
-    # Handle title first
-    title_len = len(title)
-    tok_data["title_str_span"] = (0, title_len)
-    title_toks = tokenizer.encode(title, add_special_tokens=False)
-    tok_data["title_tok_span"] = (0, len(title_toks))
-    tok_data["prep_title_str_span"] = None
-    tok_data["prep_title_tok_span"] = None
-    if prep_title is not None:
-        tok_data["prep_title_str_span"] = (0, len(prep_title))
-        prep_title_toks = tokenizer.encode(prep_title, add_special_tokens=False)
-        tok_data["prep_title_tok_span"] = (0, len(prep_title_toks))
-
-    # Then handle the chunk content
-    strs_found = []
-    tok_inds = []
-    str_inds = []
-
-    # Explode out all the inds, and sort by first indexg
-    st_inds_dict = get_inds_in_chunk(chunk, strs, cid)
-    st_inds_list = [(st, i) for st, il in st_inds_dict.items() for i in il]
-    st_inds_list = sorted(st_inds_list, key=lambda x: (x[1][0], x[1][1]))
-    for st, inds in st_inds_list:
-        pre_str = chunk[: inds[0]]
-        # act_str = chunk[inds[0] : inds[1]]
-        through_str = chunk[: inds[1]]
-
-        before_ind = tokenizer.encode(pre_str, add_special_tokens=False)
-        start_token_ind = len(before_ind)
-        after_ind = tokenizer.encode(through_str, add_special_tokens=False)
-        end_token_ind = len(after_ind)
-
-        if start_token_ind == end_token_ind:
-            continue
-
-        if len(tok_inds) > 0:
-            last_token_inds = tok_inds[-1]
-            if (
-                start_token_ind == last_token_inds[0]
-                and end_token_ind == last_token_inds[1]
-            ):
-                continue
-
-        strs_found.append(st)
-        tok_inds.append((start_token_ind, end_token_ind))
-        str_inds.append(inds)
-
-    chunk_str_start_ind = title_len + len(tokenizer.sep_token)
-    chunk_tok_start_ind = len(title_toks) + 1
-    tok_data["passage_spans"] = {}
-    for i, st in enumerate(strs_found):
-        if st not in tok_data["passage_spans"]:
-            tok_data["passage_spans"][st] = {
-                "tok_spans": [],
-                "str_spans": [],
-            }
-        tok_data["passage_spans"][st]["tok_spans"].append(
-            tuple([ind + chunk_tok_start_ind for ind in tok_inds[i]])
-        )
-        tok_data["passage_spans"][st]["str_spans"].append(
-            tuple([ind + chunk_str_start_ind for ind in str_inds[i]])
-        )
-    return tok_data
-
-
-def split_cid(cid):
-    page_id, chunk_num = cid.split("__")
-    return page_id, int(chunk_num)
-
-
-def chunk_data_to_passage_data(chunk_data, chunk_num=None):
-    if chunk_num is None:
-        _, chunk_num = split_cid(chunk_data["chunk_id"])
-    out_dict = {
-        k: v.strip()
-        for k, v in chunk_data.items()
-        if k
-        in [
-            "title",
-            "prep_title",
-            "qnn_title",
-            "qnn_prep_title",
-            "on_title",
-            "qn_title",
-        ]
-    }
-    if out_dict["qnn_title"] is None:
-        out_dict["qnn_title"] = ""
-    if out_dict["qnn_prep_title"] is None:
-        out_dict["qnn_prep_title"] = ""
-    out_dict["passage_list"] = [chunk_data["content"]]
-    out_dict["chunk_num_list"] = [chunk_num]
-    return out_dict
-
-
-def chunk_data_to_token_data(chunk_data, tokenizer):
-    prep_title = chunk_data["prep_title"].strip()
-    tag_strs = list(set([s[0] for s in chunk_data["tags"]]))
-    tags_and_links_strs = list(set(tag_strs + [s[0] for s in chunk_data["links"]]))
-    just_tags_tok_data = get_token_inds(
-        tokenizer,
-        chunk_data["title"],
-        chunk_data["content"],
-        tag_strs,
-        prep_title=prep_title,
-        cid=chunk_data["chunk_id"],
-    )
-    tags_and_links_tok_data = get_token_inds(
-        tokenizer,
-        chunk_data["title"],
-        chunk_data["content"],
-        tags_and_links_strs,
-        prep_title=prep_title,
-        cid=chunk_data["chunk_id"],
-    )
-    return {
-        "just_tags": just_tags_tok_data,
-        "tags_and_links": tags_and_links_tok_data,
-    }
-
-
-def init_graphs(get_graph_key):
-    graphs = {}
-    for use_links in [True, False]:
-        key = get_graph_key(use_links)
-        graphs[key] = {
-            "ori2ents": defaultdict(set),  # str -> {ent, }
-            "ent2oris": defaultdict(set),  # ent -> {str, }
-            "cid2children": defaultdict(set),  # cid -> {(str, ent), ...}
-            "ori2cids": defaultdict(set),  # str -> {cid, }
-            "ent2cids": defaultdict(set),  # ent -> {cid, }
-            "ori2entdetailed": defaultdict(
-                dict
-            ),  # str -> {(cid, ent, num_strent_in_cid), }
-        }
-    return graphs
-
-
-def init_sets(get_graph_key):
-    sets = {}
-    for use_links in [True, False]:
-        key = get_graph_key(use_links)
-        sets[key] = {
-            "title": set(),
-            "prep_title": set(),
-            "linked_entity": set(),
-            "ori_text": set(),
-        }
-    return sets
-
-
-def update_with_chunk_data(
-    pdl, tkns, graphs, sets, str2qnn, get_graph_key, tokenizer, chunk_data
-):
-    cid = chunk_data["chunk_id"]
-    page_id, chunk_num = split_cid(cid)
-    title = chunk_data["title"]
-    prep_title = chunk_data["prep_title"].strip()
-
-    # if '&quot;' in title or '&amp;' in title:
-    #    print(f"Title: {title} vs", title.replace('&quot;', '"').replace('&amp;', '&'))
-
-    # Passage Data List
-    if page_id in pdl:
-        pdl[page_id]["passage_list"].append(chunk_data["content"])
-        pdl[page_id]["chunk_num_list"].append(chunk_num)
-    else:
-        pdl[page_id] = chunk_data_to_passage_data(chunk_data, chunk_num=chunk_num)
-
-    # Tokens
-    tkns[cid] = chunk_data_to_token_data(chunk_data, tokenizer)
-
-    # Rest of graph creation (for tags and tags_links separately)
-    for use_links in [True, False]:
-        key = get_graph_key(use_links)
-        if cid == "65526679__0":
-            print(cid, use_links, key)
-
-        # Title and prep title
-        if chunk_data["qnn_title"] is None:
-            str2qnn[title] = ""
-        else:
-            str2qnn[title] = chunk_data["qnn_title"]
-        sets[key]["title"].add(title)
-        graphs[key]["ori2ents"][title].add(title)
-        graphs[key]["ent2oris"][title].add(title)
-        graphs[key]["ori2cids"][title].add(cid)
-        graphs[key]["ent2cids"][title].add(cid)
-
-        if prep_title != title:
-            if chunk_data["qnn_prep_title"] is None:
-                qnn_prep_title = ""
-            else:
-                qnn_prep_title = chunk_data["qnn_prep_title"].strip()
-            str2qnn[prep_title] = qnn_prep_title
-            sets[key]["prep_title"].add(prep_title)
-            graphs[key]["ori2ents"][prep_title].add(prep_title)
-            graphs[key]["ent2oris"][prep_title].add(prep_title)
-            graphs[key]["ori2cids"][prep_title].add(cid)
-            graphs[key]["ent2cids"][prep_title].add(cid)
-
-        # Links and Tags
-        parsed_str_list = [[li for li in ll] for ll in chunk_data["tags"]]
-        if use_links:
-            for llist in chunk_data["links"]:
-                normed_link_ent = su.norm_links(llist[1])
-                if normed_link_ent == "":
-                    continue
-                new_llist = [
-                    llist[ii] if ii != 1 else normed_link_ent
-                    for ii in range(len(llist))
-                ]
-                parsed_str_list.append(new_llist)
-
-        for ori_to_ent in parsed_str_list:
-            ori, ent, qnn_ori, qnn_ent = ori_to_ent
-            if qnn_ori is None:
-                qnn_ori = ""
-            if qnn_ent is None:
-                qnn_ent = ""
-            if ori is None:
-                ori = ""
-            if ent is None:
-                ent = ""
-            if "&quot;" in ori or "&amp;" in ori:
-                ori = ori.replace("&quot;", '"').replace("&amp;", "&")
-            if "&quot;" in ent or "&amp;" in ent:
-                ent = ent.replace("&quot;", '"').replace("&amp;", "&")
-
-            str2qnn[ori] = qnn_ori
-            str2qnn[ent] = qnn_ent
-            sets[key]["ori_text"].add(ori)
-            sets[key]["linked_entity"].add(ent)
-            graphs[key]["ori2ents"][ori].add(ent)
-            graphs[key]["ent2oris"][ent].add(ori)
-            graphs[key]["cid2children"][cid].add((ori, ent))
-            graphs[key]["ori2cids"][ori].add(cid)
-            graphs[key]["ent2cids"][ent].add(cid)
-            if cid not in graphs[key]["ori2entdetailed"][ori]:
-                graphs[key]["ori2entdetailed"][ori][cid] = {ent: 1}
-            elif ent not in graphs[key]["ori2entdetailed"][ori][cid]:
-                graphs[key]["ori2entdetailed"][ori][cid][ent] = 1
-            else:
-                graphs[key]["ori2entdetailed"][ori][cid][ent] += 1
-
-
-def process_chunked_fixed_file(
-    input_file,
-    tokenizer_config_path,
-    wiki_chunked_fixed_parsed_dir,
-    output_dir=None,
-    tokenizer=None,
-    verbose=False,
-):
-    if tokenizer is None:
-        tokenizer = tu.initialize_tokenizer(tokenizer_config_path)
-
-    if output_dir is None:
-        output_dir = wiki_chunked_fixed_parsed_dir
-
-    input_filename = input_file.split("/")[-1][: -len(".jsonl")]
-
-    def get_graph_key(use_links):
-        return "graph_data_" + ("tags_and_links" if use_links else "just_tags")
-
-    out_file = get_mapped_file(output_dir, input_filename)
-    if os.path.exists(out_file):
-        logging.info(f">> Out file already exists, skip: {out_file}")
-        return
-
-    # Initialize the data structures
-    str2qnn = {}
-    passage_data = {}  # page_id -> {}
-    tokens = {}  # cid -> {}
-    graphs = init_graphs(get_graph_key)
-    sets = init_sets(get_graph_key)
-
-    # Read in the file and process
-    with jsonlines.open(input_file) as reader:
-        for i, chunk_data in enumerate(reader):
-            ru.processed_log(i, every=100)
-            update_with_chunk_data(
-                passage_data,
-                tokens,
-                graphs,
-                sets,
-                str2qnn,
-                get_graph_key,
-                tokenizer,
-                chunk_data,
-            )
-
-    # Dump data
-    for k in graphs.keys():
-        for n in graphs[k].keys():
-            graphs[k][n] = dict(graphs[k][n])
-    output_data = {
-        "passage_data": passage_data,
-        "tokens": tokens,
-        "graphs": graphs,
-        "sets": sets,
-        "str2qnn": str2qnn,
-    }
-    fu.dumppkl(output_data, out_file)
-
-
-def process_all_chunked_fixed(input_dir, processes=100, test=False, mod=None, eq=None):
-    all_files = sorted(glob.glob(f"{input_dir}wikipedia_chunks_*.jsonl"))
-    if test:
-        # all_files = all_files[:processes]
-        base = "/scratch/ddr8143/wikipedia/tagme_dumps_qampari_wikipedia_chunked_fixed/"
-        all_files = [
-            f"{base}wikipedia_chunks_14384.jsonl",
-            f"{base}wikipedia_chunks_14641.jsonl",
-            f"{base}wikipedia_chunks_1496.jsonl",
-            f"{base}wikipedia_chunks_15009.jsonl",
-        ]
-    if mod is not None and eq is not None:
-        all_files = [f for i, f in enumerate(all_files) if i % mod == eq]
-    logging.info(f">> Processing {len(all_files)} with {processes} processes")
-
-    with multiprocessing.Pool(processes=processes) as pool:
-        result_list = []
-        for _, res in enumerate(
-            pool.imap_unordered(process_chunked_fixed_file, all_files)
-        ):
-            result_list.append(res)
-
-
-# # --------- Postprocess Wikipedia ----------# #
-
-
 def glob_alpha_segs(top_wiki_dir):
     return sorted(glob.glob(f"{top_wiki_dir}[A-Z][A-Z]"))
 
@@ -750,210 +744,6 @@ def glob_alpha_subsegs(alpha_path):
 def glob_all_wiki_files(top_wiki_dir):
     return sorted(glob.glob(f"{top_wiki_dir}[A-Z][A-Z]/wiki_[0-9][0-9]"))
 
-
-def process_tag(raw_tag):
-    if raw_tag is not None:
-        qn_tag = su.qmp_norm(raw_tag)
-        nqn_tag = su.qnn_norm(su.get_detokenizer(), raw_tag)
-        if nqn_tag is not None and len(nqn_tag) > 0:
-            return nqn_tag, qn_tag
-    return None, None
-
-
-def process_link(raw_link):
-    if raw_link is not None:
-        fixed_link = su.norm_links(raw_link)
-        if fixed_link is not None and len(fixed_link) > 0:
-            qn_link = su.qmp_norm(fixed_link)
-            nqn_link = su.qnn_norm(su.get_detokenizer(), fixed_link)
-            if nqn_link is not None and len(nqn_link) > 0:
-                return nqn_link, qn_link
-    return None, None
-
-
-# ---------------- Chunks: Produce Chunked Fixed ------------------#
-
-
-def expand_ldata(orig_ldata):
-    ldata = {**orig_ldata}
-
-    # # Expand the title
-    dtk = su.get_detokenizer()
-    title = ldata["title"]
-    prep_title = title.split("(")[0]  # pre_process_title
-    ldata["prep_title"] = prep_title
-    ldata["qnn_title"] = su.qnn_norm(dtk, title)
-    ldata["qnn_prep_title"] = su.qnn_norm(dtk, prep_title)
-    # for backwards compatability
-    ldata["qn_title"] = su.qmp_norm(title)
-    ldata["on_title"] = su.old_norm(title)
-
-    # # Expand the links and tags
-    extended_links = []
-    for link in ldata["links"]:
-        ori_text, ent_str = link
-        qnn_ori_text = su.qnn_norm(dtk, ori_text)
-
-        fixed_ent_str = su.norm_links(ent_str)
-        if fixed_ent_str is None:
-            qnn_ent_str = None
-        else:
-            qnn_ent_str = su.qnn_norm(dtk, fixed_ent_str)
-        extended_links.append(
-            [
-                ori_text,
-                ent_str,
-                qnn_ori_text,
-                qnn_ent_str,
-            ]
-        )
-    extended_tags = []
-    for tag in ldata["tags"]:
-        ori_text, ent_str = tag
-        qnn_ori_text = su.qnn_norm(dtk, ori_text)
-        if ent_str is None:
-            qnn_ent_str = None
-        else:
-            qnn_ent_str = su.qnn_norm(dtk, ent_str)
-        extended_tags.append(
-            [
-                ori_text,
-                ent_str,
-                qnn_ori_text,
-                qnn_ent_str,
-            ]
-        )
-    ldata["links"] = extended_links
-    ldata["tags"] = extended_tags
-    return ldata
-
-# ---------------- Chunks: Re-Split to Fixed Sized Chunks ------------------#
-
-def long_chunk_to_small_chunks(
-    in_ldata, max_num_words=200, goal_num_words=100, period_threshold=40
-):
-    chunk = in_ldata["content"]
-    cid = in_ldata["chunk_id"]
-    tags = in_ldata["tags"]
-    links = in_ldata["links"]
-
-    cid_base, cid_part = cid.split("__")
-    chunk_left = chunk
-    new_chunks = []
-    while len(chunk_left) > 0:
-        chunk_left_words = chunk_left.split()
-        first_words = chunk_left_words[:goal_num_words]
-        first_words_len = len(" ".join(first_words))
-        end_ind = first_words_len
-        switch_to_spaces = goal_num_words + period_threshold
-        while end_ind < len(chunk_left) and (
-            (
-                len(chunk_left[:end_ind].split()) < switch_to_spaces
-                and chunk_left[end_ind] != "."
-            )
-            or (
-                len(chunk_left[:end_ind].split()) >= switch_to_spaces
-                and chunk_left[end_ind] != " "
-            )
-        ):
-            end_ind += 1
-        end_ind += 1  # include the space or period in the prev chunk
-        new_chunk = chunk_left[:end_ind]
-        new_chunks.append(new_chunk)
-        if end_ind == len(chunk_left):
-            chunk_left = ""
-        else:
-            chunk_left = chunk_left[end_ind:]
-    new_chunk_cids = [f"{cid_base}__{int(cid_part)+i}" for i in range(len(new_chunks))]
-
-    all_tags = {
-        "tags": tags,
-        "links": links,
-    }
-    all_new_tags = {}
-    for ttype, tgs in all_tags.items():
-        new_tags = [[]]
-        chunk_ind = 0
-        num_tries = 0
-        unfound = []
-        for ori_text, ent_str in tags:
-            if num_tries > 5:
-                unfound.append([ori_text, ent_str])
-                break
-            if ori_text in new_chunks[chunk_ind]:
-                new_tags[chunk_ind].append((ori_text, ent_str))
-            else:
-                if chunk_ind + 1 >= len(new_chunks):
-                    chunk_ind = 0
-                    num_tries += 1
-                else:
-                    chunk_ind += 1
-                    new_tags.append([])
-        all_new_tags[ttype] = [list(set(str_tuple_list)) for str_tuple_list in new_tags]
-        if len(unfound) > 0:
-            for ori_text, ent_str in unfound:
-                logging.info(
-                    f">> ERROR: unfound {ttype} for {cid}: {ori_text} {ent_str}"
-                )
-    new_tags_list = all_new_tags["tags"]
-    new_links_list = all_new_tags["links"]
-
-    new_ldata = []
-    for i, new_chunk in enumerate(new_chunks):
-        nldata = {**in_ldata}
-        nldata["content"] = new_chunk
-        nldata["chunk_id"] = new_chunk_cids[i]
-        if i < len(new_tags_list):
-            nldata["tags"] = new_tags_list[i]
-        else:
-            nldata["tags"] = []
-        if i < len(new_links_list):
-            nldata["links"] = new_links_list[i]
-        else:
-            nldata["links"] = []
-        new_ldata.append(nldata)
-    return new_ldata
-
-
-def write_fixed_too_long_chunks(
-    file_list,
-    wiki_fixed_chunk_dir,
-    max_num_words=200,
-    goal_num_words=100,
-    period_threshold=40,
-):
-    fixed_out_dir = wiki_fixed_chunk_dir
-    for i, in_path in enumerate(file_list):
-        ru.processed_log(i, len(file_list))
-        out_path = fixed_out_dir + in_path.split("/")[-1]
-        if os.path.exists(out_path):
-            logging.info(f">> Found {out_path} so skip")
-            continue
-        with jsonlines.Writer(open(out_path, "w+"), flush=True) as writer:
-            with jsonlines.open(in_path) as reader:
-                for line in reader:
-                    ldata = line["meta"]
-                    chunk = ldata["content"]
-                    if len(chunk) > max_num_words * 3:
-                        if len(chunk.split()) <= max_num_words:
-                            # actually, its fine, write and continue
-                            writer.write(expand_ldata(ldata))
-                            continue
-
-                        # Process and write each new chunk then continue
-                        new_ldata_list = long_chunk_to_small_chunks(
-                            ldata,
-                            max_num_words,
-                            goal_num_words,
-                            period_threshold,
-                        )
-                        for new_ldata in new_ldata_list:
-                            writer.write(expand_ldata(new_ldata))
-                        continue
-
-                    # If its not too long, just write it directly
-                    writer.write(expand_ldata(ldata))
-    logging.info(">> Done!")
 
 
 # ##################################
