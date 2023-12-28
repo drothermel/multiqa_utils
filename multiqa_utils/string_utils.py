@@ -85,6 +85,7 @@ def get_detokenizer():
     return MosesDetokenizer(lang="en")
 
 
+# From qampari github
 # Normalization used by qmp when loading in wiki title and text
 # So the chunks already have this and we should apply it to the
 # candidate strs before returning them as answers.
@@ -94,6 +95,7 @@ def normalize(detokenizer, el):
     return detokenizer.detokenize(tokens).replace("'", "'")
 
 
+# From qampari github
 def fix_qu(string):
     pat = re.compile('"(.*?)"')
     pat2 = re.compile('" (.*?) "')

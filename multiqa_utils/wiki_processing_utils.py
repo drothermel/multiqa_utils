@@ -1,133 +1,80 @@
-import jsonlines
-import glob
 import os
-from collections import defaultdict
-import logging
+
+# Used for processing new wiki dump
 import re
-import multiprocessing
 import html
-import itertools
 
-from utils.util_classes import Metrics
-import utils.file_utils as fu
-import utils.run_utils as ru
-from multiqa_utils.helper_classes import (
-    StringKey, PassageData, SidNormer, Ori2Ent, Int2ContigIdKey,
-)
-#import multiqa_utils.dpr_tokenizer_utils as tu
-import multiqa_utils.string_utils as su
-
-# ##################################
-# #    Process New Wikidump       ##
-# ##################################
-
-# TODO: pull in the utils from QAMPARI repo here too
+from utils.parallel_utils import FileProcessor
 
 
-# After wikiextractor has already processed the wikidump then we can
-# use this to create base files for a page index.
-#
-# HTML Escaping from:
-# https://medium.com/@jorlugaqui/
-# how-to-strip-html-tags-from-a-string-in-python-7cb81a2bbf44
-# This will:
-#    1) Remove any html tags remaining from the text
-#    2) Append the keywords "Title:" and "Article:" along with the title to the text
-#    3) Format the final output file into a .jsonl in the format expected by
-#       pyserini index builder
-def postprocess_wikipedia_segment_to_page_index(infile, outfile, verbose=True):
-    clean = re.compile("<.*?>")
-    orig_file = fu.load_file(infile, ending=".jsonl")
+class WikiChunker(FileProcessor):
+    def __init__(cfg):
+        self.cfg = cfg
+        self.chunked_dir = cfg.wiki_processing.wiki_chunked_dir
+        super().__init__(
+            cfg.wiki_processing.num_threads,
+            cfg.wiki_processing.num_procs,
+            cfg.wiki_processing.proc_batch_size,
+            skip_exists=cfg.wiki_processing.skip_exists,
+        )
 
-    postprocess_pages = []
-    for obj in orig_file:
-        if obj["text"]:
-            cleaned_text = re.sub(clean, "", html.unescape(obj["text"]))
-            new_text = f"Title: {obj['title']}\nArticle: {cleaned_text}"
-            postprocess_pages.append(
-                {
-                    "id": obj["id"],
-                    "contents": new_text,
-                }
-            )
-
-    fu.dumpjsonl(postprocess_pages, outfile, verbose=verbose)
+    def get_output_from_inpath(self, file_path):
+        
 
 
-# ##################################
-# #    Extract Wiki Graph Data    ##
-# ##################################
+    def get_chunked_filepath(init_filepath):
+        # basepath/AA/wiki_00
+        init_name = fu.get_file_from_path(init_filepath)
+        init_dir = fu.get_dir_from_path(init_filepath)
+        sub_dirname = init_dir.split(os.path.sep)
+        return os.path.join(self.chunked_dir, f'{sub_dirname}_{init_name}.pkl')
+    
+
+    def _chunk_wiki_file(self, filepath):
+        
+        
+
+# Pool fxn for an input file list
+# Chunk one original wiki file per process
+def chunk_wiki_files(input_files, output_dir, num_procs):
+    os.makedirs(output_dir, exist_ok=True)
+    fxn_args_list = list(zip(input_files, repeat(output_dir)))
+    ru.apply_pool(get_chunks, fxn_args_list, len(input_files), processes=num_procs)
+
+# From qampari github
+# DataCreation/DataAlginment/utils/alignment_utils.py
+def fix_parsed_wiki_text(sample):
+    text_splits = sample["clean_text"].split("&gt;")
+    test_splits_new = [
+        text_splits[i].replace("&lt;/a", "")
+        if i % 2 == 1
+        else text_splits[i].split("&lt;a")[0]
+        for i in range(len(text_splits))
+    ]
+    text_new = " ".join(test_splits_new)
+    sample["text"] = text_new
+    return sample
+
+# From qampari github
+# Pulled from DataCreation/DataAlginment/utils/alignment_utils.py
+def read_parsed_wikipedia(input_file):
+    total_data = list()
+    with open(input_file, "r") as f:
+        for line in f.readlines():
+            curr_data = json.loads(line.strip())
+            total_data.append(fix_text(curr_data))
+    return total_data
+
+# TODO: get rid of this
+# From qampari github
+def _read_parsed_wiki(file_path):
+    dump = read_parsed_wikipedia(file_path)
+    for el in dump:
+        el["file_path"] = file_path
+        yield el
 
 
-
-# su.get_all_norm_fxns()
-class WikidataMapper:
-    def __init__():
-        # Needed for Graph Building
-        #  - all_str_key => qent_strs to sid to use to query the graph
-        #  - title_sids
-        #  - ref_sids
-        #  - norm2sids: {norm_str: matching_sids}
-        #       => used to build the graph
-        # Needed for CF
-        #  - 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# # ---- Path Builder Utils ---- # #
-
-
-def get_data_path(cfg, struct_type, data_type):
-    if struct_type == 'graphs':
-        return get_graph_data_path(cfg, data_type[0], data_type[1])
-    if struct_type == 'sid_sets':
-        return get_set_data_path(cfg, data_type[0], data_type[1])
-    if struct_type == 'norm2sids':
-        return get_norm2sids_path(cfg, data_type[0], data_type[1])
-    if struct_type == 'ori2entdetailed':
-        return get_ori2entdetailed_path(cfg, data_type[0], data_type[1])
-    assert False
-
-
-def get_graph_data_path(cfg, graph_type, data_type):
-    assert graph_type in cfg.wiki_processing.all_types.graph_types
-    assert data_type in cfg.wiki_processing.all_types.graphs
-    return f"{cfg.postp_dir}{graph_type}__{data_type}.pkl"
-
-
-def get_set_data_path(cfg, graph_type, set_type):
-    assert graph_type in cfg.wiki_processing.all_types.graph_types
-    assert set_type in cfg.wiki_processing.all_types.sets
-    return f"{cfg.postp_dir}{graph_type}__{set_type}_set.pkl"
-
-
-def get_norm2sids_path(cfg, graph_type, norm_type):
-    assert graph_type in cfg.wiki_processing.all_types.graph_types
-    assert norm_type in cfg.wiki_processing.all_types.norms
-    return f"{cfg.postp_dir}{graph_type}__{norm_type}_norm2sids.pkl"
-
-
-def get_ori2entdetailed_path(cfg, graph_type, str_ent_type):
-    assert graph_type in cfg.wiki_processing.all_types.graph_types
-    assert str_ent_type in cfg.wiki_processing.all_types.str_ents
-    return f"{cfg.postp_dir}{graph_type}__ori2entdetailed_{str_ent_type}.pkl"
-
+# # ---- Old Mapper & Reducer Fxns ---- # #
 
 def get_mapped_file(cfg, input_name):
     mapped_dir = cfg.wiki_processing.wiki_mapped_dir
@@ -136,351 +83,6 @@ def get_mapped_file(cfg, input_name):
 
 def get_all_mapped_files(cfg):
     return sorted(glob.glob(get_mapped_file(cfg, "*")))
-
-
-# # ---- Loaders ---- # #
-
-# Update curr_structs by loading or updating all struct types based on input
-# needed struct dict
-# stucts_needed = {struct_type: kwargs}
-# e.g. {'sid_sets': {'graph_set_types': 'all'}}
-# e.g. {'sid_sets': {'graph_set_types': [(graph_type, 'title'), (graph_type, 'prep_title')]}}
-
-def load_update_structs(cfg, structs_needed, curr_structs):
-    curr_struct_types = list(curr_structs.keys())
-    logging.info(">> Clear old data:")
-    for struct_type in curr_struct_types:
-        # Case 1: Struct not needed, delete
-        if struct_type not in structs_needed:
-            logging.info(f">>  - remove: {struct_type}")
-            del curr_structs[struct_type]
-
-    logging.info(">> Loading/Updating all data:")
-    for struct_type, kwargs in structs_needed.items():
-        if struct_type in curr_structs:
-            old_kwargs = curr_structs[struct_type]['kwargs']
-            # Case 2: No changes needed, keep
-            if old_kwargs == kwargs:
-                logging.info(f">>  - keep: {struct_type} {kwargs}")
-                continue
-            # Case 3: Updates needed, update
-            else:
-                logging.info(f">>  - update: {struct_type} {kwargs}")
-                load_update_struct(
-                    cfg,
-                    struct_type,
-                    curr_structs,
-                    kwargs=kwargs,
-                )
-        # Case 4: New struct needed, load
-        else:
-            logging.info(f">> - loading {struct_type} {kwargs}")
-            curr_structs[struct_type] = {
-                'data': load_struct(cfg, struct_type, kwargs=kwargs),
-                'kwargs': kwargs,
-            }
-
-
-
-def get_all_combs(cfg, key_list):
-    all_lists = [cfg.wiki_processing.all_types[k] for k in key_list]
-    return itertools.product(*all_lists)
-
-
-# TODO: I think this wouldn't work for all_str_key or the like
-# Update curr_structs by loading or updating a specific struct type
-def load_update_struct(
-    cfg,
-    struct_type,
-    curr_structs,
-    kwargs={},
-):
-    # Get needed types from args and cfg
-    loading_cfg = cfg.wiki_processing.struct_loading
-    needed_types = kwargs.get(loading_cfg[struct_type]['type_key'], 'all')
-    if needed_types == 'all':
-        needed_types = get_all_combs(cfg, loading_cfg[struct_type]['type_list'])
-    needed_types = set(needed_types)
-
-    # Cleanup curr_structs first
-    if struct_type in curr_structs:
-        old_types_set = set(curr_structs[struct_type]['data'].keys())
-        remove_types = old_types_set - needed_types
-        for remove_t in remove_types:
-            logging.info(f">>  - remove {struct_type} {remove_t}")
-            del curr_structs[struct_type]['data'][remove_t]
-
-        # Only load new graph_sets
-        needed_types = needed_types - old_types_set
-
-    # Load the struct
-    new_data = load_struct(cfg, struct_type, kwargs=kwargs)
-    # Update curr_structs
-    if struct_type in curr_structs:
-        curr_structs[struct_type]['data'].update(new_data)
-        curr_structs[struct_type]['kwargs'] = kwargs
-    else:
-        curr_structs[struct_type] = {
-            'data': new_data,
-            'kwargs': kwargs,
-        }
-
-
-# Directly load and return a given struct based on arguments
-def load_struct(cfg, struct_type, kwargs={}):
-    logging.info(f">> Loading {struct_type}")
-    if struct_type == 'all_str_key':
-        return StringKey(
-            data_dir=cfg.wiki_processing.string_key.dir,
-            name=cfg.wiki_processing.string_key.all_key_name,
-            **kwargs,
-        )
-
-    if struct_type == 'qnn_str_key':
-        return StringKey(
-            data_dir=cfg.wiki_processing.string_key.dir,
-            name=cfg.wiki_processing.string_key.qnn_key_name,
-            **kwargs,
-        )
-
-    if struct_type == 'passage_data':
-        return PassageData(
-            data_dir=cfg.wiki_processing.passage_data.dir,
-            name=cfg.wiki_processing.passage_data.name,
-            **kwargs,
-        )
-
-    if struct_type == 'sid_normer':
-        sid_normer = SidNormer(
-            data_dir=cfg.wiki_processing.sid_normer.dir,
-            name=cfg.wiki_processing.sid_normer.name,
-        )
-        if kwargs.get('load_to_memory', False):
-            sid_normer.load_to_memory()
-        return sid_normer
-
-    if struct_type in ['sid_sets', 'graphs', 'norm2sids']:
-        struct_loading_cfg = cfg.wiki_processing.struct_loading
-        return load_complex_struct(
-            cfg,
-            struct_type,
-            types=kwargs.get(struct_loading_cfg[struct_type]['type_key'], 'all'),
-        )
-
-
-def load_complex_struct(cfg, struct_type, types='all'):
-    struct_loading_cfg = cfg.wiki_processing.struct_loading
-    if types == 'all':
-        types = get_all_combs(cfg, struct_loading_cfg[struct_type]['type_list'])
-
-    data = {}
-    for data_type in types:
-        data_path = get_data_path(cfg, struct_type, data_type)
-        data[data_type] = fu.load_file(data_path)
-    return data
-
-
-# # ---- Key Parsing ---- # #
-
-
-def get_norm_bool_from_ent_str_type(ent_str_type):
-    ent_s, str_s = ent_str_type.split()
-    norm_bools = (ent_s[0] == "q", str_s[0] == "q")
-    return norm_bools
-
-
-# # --------- Postprocess Wikipedia v2 ----------# #
-
-# # --------- v2: More Processing Functions -----# #
-def make_tsid_id_key(cfg, graph_type, title_sid_set, prep_title_sid_set):
-    id_key = Int2ContigIdKey(
-        data_dir=cfg.postp_datastruct_dir,
-        name=f'tsid_idkey__{graph_type}',
-        building=True,
-    )
-    # First add title sids
-    for tsid in title_sid_set:
-        id_key.add_val(tsid)
-    id_key.metadata['last_title_id'] = id_key.last_elem_id()
-
-    # Then add prep_title sids that aren't title sids
-    for ptsid in (prep_title_sid_set - title_sid_set):
-        id_key.add_val(ptsid)
-
-    # And finally save the id_key
-    id_key.save()
-
-def make_rsid_id_key(cfg, graph_type, ref_sid_set):
-    id_key = Int2ContigIdKey(
-        data_dir=cfg.postp_datastruct_dir,
-        name=f'rsid_idkey__{graph_type}',
-        building=True,
-    )
-    for rsid in ref_sid_set:
-        id_key.add_val(rsid)
-    id_key.save()
-
-def make_osid_id_key(
-    cfg,
-    graph_type,
-    title_sid_set,
-    prep_title_sid_set,
-    ref_sid_set,
-    ori_str_sid_set,
-):
-    id_key = Int2ContigIdKey(
-        data_dir=cfg.postp_datastruct_dir,
-        name=f'osid_idkey__{graph_type}',
-        building=True,
-    )
-    new_md = {}
-
-    # First add the titles, like in tsid
-    for tsid in title_sid_set:
-        id_key.add_val(tsid)
-    new_md['last_title_id'] = id_key.last_elem_id()
-
-    # Then add the new prep_titles
-    for ptsid in (prep_title_sid_set - title_sid_set):
-        id_key.add_val(ptsid)
-    new_md['last_prep_title_id'] = id_key.last_elem_id()
-
-    refs_not_titles = ref_sid_set - prep_title_sid_set - title_sid_set
-    # Then add ori_text that are also ref ents
-    for rsid in (ori_str_sid_set & refs_not_titles):
-        id_key.add_val(rsid)
-    new_md['last_ref_id'] = id_key.last_elem_id()
-
-    # And finally, ori_text that aren't ents of any kind
-    for osid in ori_str_sid_set:
-        id_key.add_val(osid, allow_repeat=True)
-
-    # Update the metadata
-    id_key.metadata.update(new_md)
-
-    # And save
-    id_key.save()
-
-
-def sets_to_subset_idkeys(cfg, sid_sets):
-    logging.info(">> Converting sets to subset id keys")
-    all_types = cfg.wiki_processing.all_types
-    for graph_type in all_types.graph_types:
-        logging.info(f">> Loading sid sets for {graph_type}")
-        title_sid_set = sid_sets[(graph_type, 'title')]
-        prep_title_sid_set = sid_sets[(graph_type, 'prep_title')]
-        ref_sid_set = sid_sets[(graph_type, 'linked_entity')]
-        ori_str_sid_set = sid_sets[(graph_type, 'ori_text')]
-
-        logging.info(">>    begin making id keys")
-        make_tsid_id_key(cfg, graph_type, title_sid_set, prep_title_sid_set)
-        make_rsid_id_key(cfg, graph_type, ref_sid_set)
-        make_osid_id_key(
-            cfg,
-            graph_type,
-            title_sid_set,
-            prep_title_sid_set,
-            ref_sid_set,
-            ori_str_sid_set,
-        )
-
-def sets_to_norm_str_key_and_sid_normer(
-    cfg, sids_sets, norm_type, graph_type,
-):
-
-
-def reduce_elem_to_sid_str_key(cfg, sid_str_key, str_sets, graph_type):
-    """ Cant do this here because this is just for one part
-    sid_str_key = hyd.instantiate(
-        cfg.wiki_processing.str_keys.sid,
-        extra_metadata={'graph_type': graph_type},
-        building=True,
-    )
-    """
-    for set_name, str_set in str_sets[graph_type].items():
-        
-    
-
-# # --------- v2: Reducing Functions ----------# #
-def mapped_wiki_into_passage_data(passage_data, mapped_passage_data_input):
-    for pid, pdata in mapped_passage_data_input.items():
-        passage_data.add_page(
-            page_id=pid,
-            title=pdata["title"],
-            prep_title=pdata["prep_title"],
-            on_title=pdata["on_title"],
-            qn_title=pdata["qn_title"],
-        )
-        for i, passage in enumerate(pdata["passage_list"]):
-            chunk_num = pdata["chunk_num_list"][i]
-            passage_data.add_passage(
-                page_id=pid,
-                chunk_num=chunk_num,
-                content=passage,
-            )
-
-
-def mapped_wiki_into_qnnstrkey(qnn_str_key, mapped_str2qnn):
-    for qnn_str in mapped_str2qnn.values():
-        qnn_str_key.add_str(qnn_str)
-
-
-def mapped_wiki_into_strkey(str_key, mapped_sets):
-    # Note we're using tags and links only because it is a superset of the
-    # strings that appear in each graph
-    tnl_sets = mapped_sets["graph_data_tags_and_links"]
-    for set_name, str_set in tnl_sets.items():
-        for s in str_set:
-            str_key.add_str(s)
-
-
-def mapped_wiki_into_sidsets(cfg, str_key, sid_sets, mapped_sets):
-    for graph_type, graph_sets in mapped_sets.items():
-        if graph_type not in sid_sets:
-            sid_sets[graph_type] = {}
-        for set_name, str_set in graph_sets.items():
-            if set_name not in sid_sets[graph_type]:
-                sid_sets[graph_type][set_name] = set()
-            for st in str_set:
-                sid = str_key.get_str2sid(st)
-                sid_sets[graph_type][set_name].add(sid)
-
-
-def mapped_wiki_into_sidnormer(str_key, qnn_key, sid_normer, mapped_str2qnn):
-    for st, qnn_str in mapped_str2qnn.items():
-        sid = str_key.get_str2sid(st)
-        nsid = qnn_key.get_str2sid(qnn_str)
-        sid_normer.add_sid_to_nsid(sid, nsid)
-
-
-# TODO: Implement
-def reducing__token_data(cfg):
-    assert False
-    """
-    files = get_all_mapped_files(cfg)
-    # TODO: setup tokenizer
-    tokenizer = None
-
-    for i, f in enumerate(files):
-        ru.processed_log(i, len(files))
-        in_data = fu.load_file(f)
-        tokenized_title = tokenizer.encode(in_data['title'], add_special_tokens=False)
-        tokenized_passage = tokenizer.encode(
-            in_data['passage'], add_special_tokens=False
-        )
-
-    # for each file: dict['tokens'] is
-    # cid -> {'just_tags': tok_data, 'tags_and_links': tok_data}
-    # tok_data -> {
-    #   title_str_span: len(title)
-    #   title_tok_span: len(title_toks)
-    #   prep_title_str_span: len(prep_title)
-    #   prep_title_tok_span: len(prep_title_toks)
-    #   passage_spans: {
-    #      string: {'tok_spans': [], 'str_spans': []},
-    #   }
-    # }
-    """
 
 
 def reducing__pagedata_strkeys_sidsets_sidnormer(cfg, test=False):
@@ -1169,7 +771,7 @@ def process_link(raw_link):
     return None, None
 
 
-# ---------------- Making and Dealing with Chunks ------------------#
+# ---------------- Chunks: Produce Chunked Fixed ------------------#
 
 
 def expand_ldata(orig_ldata):
@@ -1225,6 +827,7 @@ def expand_ldata(orig_ldata):
     ldata["tags"] = extended_tags
     return ldata
 
+# ---------------- Chunks: Re-Split to Fixed Sized Chunks ------------------#
 
 def long_chunk_to_small_chunks(
     in_ldata, max_num_words=200, goal_num_words=100, period_threshold=40
@@ -1351,3 +954,37 @@ def write_fixed_too_long_chunks(
                     # If its not too long, just write it directly
                     writer.write(expand_ldata(ldata))
     logging.info(">> Done!")
+
+
+# ##################################
+# #    Process New Wikidump       ##
+# ##################################
+
+# After wikiextractor has already processed the wikidump then we can
+# use this to create base files for a page index.
+#
+# HTML Escaping from:
+# https://medium.com/@jorlugaqui/
+# how-to-strip-html-tags-from-a-string-in-python-7cb81a2bbf44
+# This will:
+#    1) Remove any html tags remaining from the text
+#    2) Append the keywords "Title:" and "Article:" along with the title to the text
+#    3) Format the final output file into a .jsonl in the format expected by
+#       pyserini index builder
+def postprocess_wikipedia_segment_to_page_index(infile, outfile, verbose=True):
+    clean = re.compile("<.*?>")
+    orig_file = fu.load_file(infile, ending=".jsonl")
+
+    postprocess_pages = []
+    for obj in orig_file:
+        if obj["text"]:
+            cleaned_text = re.sub(clean, "", html.unescape(obj["text"]))
+            new_text = f"Title: {obj['title']}\nArticle: {cleaned_text}"
+            postprocess_pages.append(
+                {
+                    "id": obj["id"],
+                    "contents": new_text,
+                }
+            )
+
+    fu.dumpjsonl(postprocess_pages, outfile, verbose=verbose)
