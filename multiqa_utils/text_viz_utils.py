@@ -1,5 +1,3 @@
-import urllib
-import unicodedata
 import textwrap
 import re
 
@@ -8,7 +6,7 @@ import utils.file_utils as fu
 WORDS_TO_IGNORE_PATH = (
     "/scratch/ddr8143/repos/multiqa_utils/data_files/words_to_ignore.json"
 )
-WORDS_TO_IGNORE = set(fu.load(WORDS_TO_IGNORE_PATH))
+WORDS_TO_IGNORE = set(fu.load_file(WORDS_TO_IGNORE_PATH))
 
 GREEN_START = "\x1b[32m"
 RED_START = "\x1b[31m"
@@ -59,11 +57,6 @@ def print_ctx(
     colored_title = color_text(ctx["title"], "green", answers)
     print(f"{ctx['score']:3.4f} | {colored_title}")
     print_wrapped(print_ctx, width)
-    for i, w in enumerate(wrapped):
-        if i == 0:
-            print(f"    >> {w}")
-        else:
-            print(f"       {w}")
 
 
 def get_answer_str(answers):

@@ -1,35 +1,51 @@
-## Goal: Create Ground Truth from AmbigQA Data File
-# (less obvious how to do this bc the questions have multiple
-#  conflicting annotations often)
+import multiqa_utils.string_utils as su
 
-# Convert all annotations into a list of lists of answer aliases
-# (necessary bc single answers aren't lists initially)
-def process_ambigqa_annotation(ann):
-    if ann["type"] == "singleAnswer":
-        return [ann["answer"]]
-    elif ann["type"] == "multipleQAs":
-        return [qap["answer"] for qap in ann["qaPairs"]]
+# # =============================================== # #
+# # =============== Info Extractors =============== # #
+# # =============================================== # #
+
+# --------- Original Data Format Extractors ---------- #
+
+
+def get_original_id(qdata):
+    return qdata['id']
+
+
+def get_question(qdata):
+    return qdata['question']
+
+
+def get_question_type(qdata):
+    multi = any([ann['type'] != 'singleAnswer' for ann in qdata['annotations']])
+    if multi:
+        return 'simple_multi'
     else:
-        assert False
+        return 'simple_single'
 
 
-# For each question choose the (last) MultiQA annotation if exists
-# (clearly, room for improvement here)
-def process_ambigqa_qdata(qdata):
-    the_answers = (None, None)
-    for ann in qdata["annotations"]:
-        ans = process_ambigqa_annotation(ann)
-        if ann["type"] == "multipleQAs":
-            return ans
-        elif the_answers[0] == None:
-            the_answers = (ann["type"], ans)
-    return the_answers[1]
+# Notes: multiple possible answer sets
+def get_answer_sets(qdata):
+    possible_answer_sets = []
+    for ann in qdata['annotations']:
+        if ann['type'] == 'singleAnswer':
+            ann_ans = [list(set(ann['answer']))]
+            possible_answer_sets.append(ann_ans)
+        else:
+            ann_ans = []
+            for qap in ann['qaPairs']:
+                ann_ans.append(list(set(qap['answer'])))
+            possible_answer_sets.append(ann_ans)
+    return possible_answer_sets
 
 
-# Takes the original file in list form and converts to ground truth
-# [(question, answer_alias_list), ...]
-def convert_original_to_ground_truth(original_data):
-    ground_truth = {}
-    for qdata in original_data:
-        ground_truth[qdata["question"]] = process_ambigqa_qdata(qdata)
-    return ground_truth
+# Notes: viewed_doc_titles is a loose approximation of entities.
+def get_gt_ent_sets(qdata):
+    ent_sets = set()
+    for vd in qdata['viewed_doc_titles']:
+        ent_sets.add(frozenset([su.prep_norm(vd), vd]))
+    return [list(fs) for fs in ent_sets]
+
+
+# Notes: None, we just have the results of their queries not the docs used
+def get_proof_data(qdata, dtk):
+    return None

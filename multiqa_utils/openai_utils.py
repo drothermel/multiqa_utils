@@ -5,6 +5,7 @@ import time
 import jsonlines
 
 import utils.run_utils as ru
+import ultis.file_utils as fu
 
 
 def setup_apikey(keyfile="/scratch/ddr8143/.openai_secretkey.txt"):
@@ -41,7 +42,6 @@ def process_with_prompt(
     make_prompt_fxn,  # takes (base_prompt, data_elem)
     outfile,
     engine="text-davinci-003",
-    progress_increment=10,
     rate_limit=-1,  # prompts/min, neg = None
     id_field="qid",  # used for caching results
 ):
@@ -57,11 +57,11 @@ def process_with_prompt(
             d for d in data_to_process if d[id_field] not in already_processed
         ]
         logging.info(
-            f"  - after loading: {len(already_processed):,} new len: {len(data_to_process):,}"
+            f"  - after loading: {len(already_processed):,} "
+            + f"new len: {len(data_to_process):,}"
         )
 
     time_per_query = 60.0 / rate_limit
-    total_start = time.time()
     with jsonlines.Writer(open(outfile, mode=mode), flush=True) as writer:
         for i, qdata in enumerate(data_to_process):
             ru.processed_log(i, len(data_to_process))
@@ -84,7 +84,11 @@ def process_with_prompt(
                 continue  # skip this example and try others
 
             writer.write(
-                {"prompt": prompt_path, "res_text": res_text, "id": qdata[id_field]}
+                {
+                    "prompt": base_prompt_path,
+                    "res_text": res_text,
+                    "id": qdata[id_field],
+                }
             )
             remaining_time = time_per_query - (time.time() - start)
             if remaining_time > 0:
