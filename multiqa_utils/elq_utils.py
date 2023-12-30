@@ -8,7 +8,7 @@ import numpy as np
 
 import torch
 from torch.utils.data import DataLoader, SequentialSampler, TensorDataset
-from transformers import BertTokenizer
+from transformers import BertTokenizerFast
 
 from elq.index.faiss_indexer import DenseHNSWFlatIndexer
 from elq.biencoder.biencoder import load_biencoder
@@ -21,6 +21,13 @@ from elq.biencoder.biencoder import load_biencoder
 # Vast majority of code from:
 # https://github.com/facebookresearch/BLINK/tree/main/elq
 # but removed some of the code paths that I wasn't using.
+
+def load_default_entity_linking_models(args):
+    logging.info(">> Loading ELQ models")
+    models = _load_models(args)
+    logging.info(">> Intiailizing tokenizer")
+    tokenizer = BertTokenizerFast.from_pretrained("bert-base-uncased")
+    return models, tokenizer
 
 
 def get_default_args(
@@ -65,26 +72,6 @@ def get_default_args(
     }
     args = argparse.Namespace(**config)
     return args
-
-
-# Taken from BLINK/elq/main_dense.py#L593
-def _display_metrics(
-    num_correct,
-    num_predicted,
-    num_gold,
-    prefix="",
-):
-    p = 0 if num_predicted == 0 else float(num_correct) / float(num_predicted)
-    r = 0 if num_gold == 0 else float(num_correct) / float(num_gold)
-    if p + r > 0:
-        f1 = 2 * p * r / (p + r)
-    else:
-        f1 = 0
-    print(
-        "{0}precision = {1} / {2} = {3}".format(prefix, num_correct, num_predicted, p)
-    )
-    print("{0}recall = {1} / {2} = {3}".format(prefix, num_correct, num_gold, r))
-    print("{0}f1 = {1}".format(prefix, f1))
 
 
 # Taken and modified from BLINK/elq/main_dense.py#L97
@@ -208,30 +195,87 @@ def _process_biencoder_dataloader(samples, tokenizer, biencoder_params):
         "text": "who is governor of ohio 2011?",
     }
     """
+    period_token = 1012
+    max_sample_len = biencoder_params["max_context_length"] - 2 # [101] + sample + [102]
     samples_text_tuple = []
+    all_start_inds = []
+    all_end_inds = []
+    title_lens = []
+    content_lens = []
+
     max_seq_len = 0
     for sample in samples:
-        samples_text_tuple
-        # truncate the end if the sequence is too long...
-        encoded_sample = (
-            [101]
-            + tokenizer.encode(sample["text"])[
-                : biencoder_params["max_context_length"] - 2
+        if 'content' in sample:
+            # Wiki sample: "id" "title" "content"
+            # Q sample: "id" "text"
+            title_encoded = tokenizer.encode_plus(
+                sample['title'],
+                add_special_tokens=False,
+                return_offsets_mapping=True,
+            )
+            content_encoded = tokenizer.encode_plus(
+                sample["content"],
+                add_special_tokens=False,
+                return_offsets_mapping=True,
+            )
+            all_tokens = title_encoded['input_ids'] + [period_token] + content_encoded['input_ids']
+            title_lens.append(len(title_encoded['input_ids']))
+            content_lens.append(len(content_encoded['input_ids']))
+
+            title_max_offset = title_encoded['offset_mapping'][-1][-1]
+            period_start = title_max_offset
+            period_end = title_max_offset + 1
+            start_content_offset = period_end + 1 # for space
+            all_offsets = (
+                title_encoded['offset_mapping'] +
+                [(period_start, period_end)] + 
+                [(
+                    s + start_content_offset, e + start_content_offset
+                ) for s, e in content_encoded['offset_mapping']]
+            )
+
+            if len(all_tokens) > max_sample_len and False:
+                print(">> error, input too long")
+            truncated_ids = all_tokens[:max_sample_len]
+            start_inds = [o[0] for o in all_offsets[:max_sample_len]]
+            end_inds = [o[1] for o in all_offsets[:max_sample_len]]
+
+            # truncate the end if the sequence is too long...
+            encoded_sample = [101] + truncated_ids + [102]
+            max_seq_len = max(len(encoded_sample), max_seq_len)
+            padding = [
+                0
+                for _ in range(
+                biencoder_params["max_context_length"] - len(encoded_sample)
+                )
             ]
-            + [102]
-        )
-        max_seq_len = max(len(encoded_sample), max_seq_len)
-        samples_text_tuple.append(
-            encoded_sample
-            + [
+
+            all_start_inds.append(start_inds + [*padding])
+            all_end_inds.append(end_inds + [*padding])
+        else:
+            all_start_inds = None
+            all_end_inds = None
+            ids = tokenizer.encode(sample['text'])
+            truncated_ids = ids[:max_sample_len]
+            encoded_sample = [101] + truncated_ids + [102]
+            max_seq_len = max(len(encoded_sample), max_seq_len)
+            padding = [
                 0
                 for _ in range(
                     biencoder_params["max_context_length"] - len(encoded_sample)
                 )
             ]
-        )
-        # print(samples_text_tuple)
+
+        samples_text_tuple.append(encoded_sample + [*padding])
+
     tensor_data_tuple = [torch.tensor(samples_text_tuple)]
+    if all_start_inds is not None:
+        tensor_data_tuple.extend([
+            torch.tensor(all_start_inds),
+            torch.tensor(all_end_inds),
+            torch.tensor(title_lens),
+            torch.tensor(content_lens),
+        ])
 
     tensor_data = TensorDataset(*tensor_data_tuple)
     sampler = SequentialSampler(tensor_data)
@@ -512,11 +556,18 @@ def _run_biencoder(
                     top_cand_logits[idx][left_align_mask[idx]].data.cpu().numpy()
                 )
 
-    return nns, dists, pred_mention_bounds, mention_scores, cand_scores
+    return (
+        nns, 
+        dists, 
+        pred_mention_bounds, 
+        mention_scores, 
+        cand_scores
+    )
+
 
 
 # Taken from BLINK/elq/main_dense.py#L380
-def _get_predictions(
+def _get_and_save_predictions(
     args,
     tokenizer,
     dataloader,
@@ -551,10 +602,9 @@ def _get_predictions(
     num_gold_from_input_window = 0
     all_entity_preds = []
 
-    out_file = None
-    if getattr(args, "save_preds_dir", None) is not None:
-        save_biencoder_file = os.path.join(args.save_preds_dir, "biencoder_outs.jsonl")
-        out_file = open(save_biencoder_file, "a+")
+    save_biencoder_file = os.path.join(args.save_preds_dir, "biencoder_outs.jsonl")
+    out_file = open(save_biencoder_file, "a+")
+    logging.info(f">> Start saving results to: {save_biencoder_file}")
 
     # nns (List[Array[int]]) [(num_pred_mentions, cands_per_mention) x exs])
     # dists (List[Array[float]]) [(num_pred_mentions, cands_per_mention) x exs])
@@ -566,10 +616,10 @@ def _get_predictions(
         if len(batch_data) > 1:
             (
                 _,
-                batch_cands,
-                batch_label_ids,
-                batch_mention_idxs,
-                batch_mention_idx_masks,
+                start_inds,
+                end_inds,
+                title_lens,
+                content_lens,
             ) = batch_data
         for b in range(len(batch_context)):
             i = batch_num * biencoder_params["eval_batch_size"] + b
@@ -577,6 +627,35 @@ def _get_predictions(
             input_context = batch_context[b][
                 batch_context[b] != 0
             ].tolist()  # filter out padding
+            if len(batch_data) > 1:
+                # "Title. Content"
+                start_offset = 1 # 101
+                title_len = title_lens[b].item()
+                sep_len = 1
+                content_len = content_lens[b].item()
+                b_start_inds = start_inds[b].tolist()
+                b_end_inds = end_inds[b].tolist()
+                title_s = start_offset
+                title_e = start_offset + title_len
+                content_s = title_e + sep_len
+                content_e = len(input_context) - 1 # remove 102
+                if False: # This asserts no truncation
+                    assert content_e == content_s + content_len
+                title_toks = input_context[title_s:title_e]
+                content_toks = input_context[content_s:content_e]
+                title_tok_offsets = [
+                    (
+                        b_start_inds[i], b_end_inds[i]
+                    ) for i in range(title_s-start_offset, title_e - start_offset)
+                ]
+                content_offset = len(sample['title'] + '. ')
+                content_tok_offsets = [
+                    (b_start_inds[i] - content_offset, b_end_inds[i] - content_offset) for i in range(
+                        content_s - start_offset, content_e - start_offset
+                    )
+                ]
+                #title_strs = [sample['title'][s:e] for s, e in title_tok_offsets]
+                #content_strs = [sample['content'][s:e] for s, e in content_tok_offsets]
 
             # (num_pred_mentions, cands_per_mention)
             scores = dists[i] if args.threshold_type == "joint" else cand_scores[i]
@@ -587,11 +666,9 @@ def _get_predictions(
             distances = scores[cands_mask]
             # (num_pred_mentions, 2)
             entity_mention_bounds_idx = pred_mention_bounds[i][cands_mask]
-            utterance = sample["text"]
 
             if args.threshold_type == "joint":
                 # THRESHOLDING
-                assert utterance is not None
                 top_mentions_mask = distances[:, 0] > threshold
             elif args.threshold_type == "top_entity_by_mention":
                 top_mentions_mask = mention_scores[i] > mention_threshold
@@ -644,11 +721,11 @@ def _get_predictions(
 
             entity_results = {
                 "id": sample["id"],
-                "text": sample["text"],
                 "scores": chosen_distances_pruned,
             }
-            entity_results.update(
-                {
+            if 'text' in sample:
+                entity_results.update({
+                    "text": sample['text'],
                     "pred_tuples_string": [
                         [
                             id2title[triple[0]],
@@ -658,25 +735,57 @@ def _get_predictions(
                     ],
                     "pred_triples": pred_triples,
                     "tokens": input_context,
-                }
-            )
+                })
+            else:
+                title_pred_triples = []
+                content_pred_triples = []
+                title_pred_tuples_string = []
+                content_pred_tuples_string = []
+                # title_len, content_len
+                for triple in pred_triples:
+                    ent_id, tok_s, tok_e = triple
+                    if tok_e <= title_len + start_offset:
+                        title_tok_s = tok_s
+                        title_tok_e = tok_e
+                        title_str_s = title_tok_offsets[title_tok_s][0]
+                        title_str_e = title_tok_offsets[title_tok_e - 1][1]
+                        title_pred_triples.append((
+                            ent_id, title_tok_s, title_tok_e
+                        ))
+                        title_pred_tuples_string.append([
+                            id2title[ent_id],
+                            sample['title'][title_str_s:title_str_e]
+                        ])
+                    else:
+                        cont_tok_s = tok_s - title_len - sep_len
+                        cont_tok_e = tok_e - title_len - sep_len
+                        cont_str_s = content_tok_offsets[cont_tok_s][0]
+                        cont_str_e = content_tok_offsets[cont_tok_e - 1][1]
+                        content_pred_triples.append((
+                            ent_id, cont_tok_s, cont_tok_e
+                        ))
+                        content_pred_tuples_string.append([
+                            id2title[ent_id],
+                            sample['content'][cont_str_s:cont_str_e]
+                        ])
+                    
+                entity_results.update({
+                    'title': sample['title'],
+                    'content': sample['content'],
+                    'title_toks': title_toks,
+                    'content_toks': content_toks,
+                    'title_tok_text_offsets': title_tok_offsets,
+                    'content_tok_text_offsets': content_tok_offsets,
+                    'title_pred_triples': title_pred_triples,
+                    'title_pred_tuples_string': title_pred_tuples_string,
+                    'content_pred_triples': content_pred_triples,
+                    'content_pred_tuples_string': content_pred_tuples_string,
+                })
 
             all_entity_preds.append(entity_results)
-            if out_file is not None:
-                out_file.write(json.dumps(entity_results) + "\n")
+            out_file.write(json.dumps(entity_results) + "\n")
 
-    if out_file is not None:
-        out_file.close()
-    return (
-        all_entity_preds,
-        num_correct_weak,
-        num_correct_strong,
-        num_predicted,
-        num_gold,
-        num_correct_weak_from_input_window,
-        num_correct_strong_from_input_window,
-        num_gold_from_input_window,
-    )
+    out_file.close()
 
 
 def run_elq(
@@ -703,46 +812,16 @@ def run_elq(
     logging.info(">> Preparing data for biencoder")
     dataloader = _process_biencoder_dataloader(
         samples,
-        biencoder.tokenizer,
+        tokenizer,
         biencoder_params,
     )
 
-    # stopping_condition = True
-    # Prepare the data for biencoder
-
-    # Original fxnality below, but since we're not careful to update the
-    # biencoder outputs then lets disable caching for now.
-    """
-    # Part 1: run biencoder if predictions not saved, otherwise load preds
-    if not getattr(args, "save_preds_dir", None) or not os.path.exists(
-        os.path.join(args.save_preds_dir, "biencoder_mention_bounds.npy")
-    ):
-        # The stuff we're doing below
-        # Then save
-        if getattr(args, "save_preds_dir", None):
-            _save_biencoder_outs(
-                args.save_preds_dir,
-                nns,
-                dists,
-                pred_mention_bounds,
-                cand_scores,
-                mention_scores,
-                runtime,
-            )
-    else:
-        (
-            nns,
-            dists,
-            pred_mention_bounds,
-            cand_scores,
-            mention_scores,
-            runtime,
-        ) = _load_biencoder_outs(args.save_preds_dir)
-    """
     assert getattr(args, "save_preds_dir", None) is not None
     logging.info(">> Running biencoder")
     start_time = time.time()
-    nns, dists, pred_mention_bounds, mention_scores, cand_scores = _run_biencoder(
+    (
+        nns, dists, pred_mention_bounds, mention_scores, cand_scores
+    ) = _run_biencoder(
         args,
         biencoder,
         dataloader,
@@ -769,16 +848,7 @@ def run_elq(
     )
 
     # Part 2: get predictions from biencoder output
-    (
-        all_entity_preds,
-        num_correct_weak,
-        num_correct_strong,
-        num_predicted,
-        num_gold,
-        num_correct_weak_from_input_window,
-        num_correct_strong_from_input_window,
-        num_gold_from_input_window,
-    ) = _get_predictions(
+    _get_and_save_predictions(
         args,
         tokenizer,
         dataloader,
@@ -794,35 +864,4 @@ def run_elq(
         mention_threshold=mention_threshold,
     )
 
-    logging.info("*--------*")
-    if num_gold > 0:
-        logging.info("WEAK MATCHING")
-        _display_metrics(num_correct_weak, num_predicted, num_gold)
-        logging.info("Just entities within input window...")
-        _display_metrics(
-            num_correct_weak_from_input_window,
-            num_predicted,
-            num_gold_from_input_window,
-        )
-        logging.info("*--------*")
-        logging.info("STRONG MATCHING")
-        _display_metrics(num_correct_strong, num_predicted, num_gold)
-        logging.info("Just entities within input window...")
-        _display_metrics(
-            num_correct_strong_from_input_window,
-            num_predicted,
-            num_gold_from_input_window,
-        )
-        logging.info("*--------*")
-        logging.info(f"biencoder runtime = {runtime}")
-        logging.info("*--------*")
 
-    return all_entity_preds
-
-
-def load_default_entity_linking_models(args):
-    logging.info(">> Loading ELQ models")
-    models = _load_models(args)
-    logging.info(">> Intiailizing tokenizer")
-    tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
-    return models, tokenizer

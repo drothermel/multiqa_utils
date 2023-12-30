@@ -81,8 +81,8 @@ def get_all_norm_fxns():
         'prep': prep_norm,
         'qnn_l': lambda st: apply_norm(st, [lnorm, qnn]),
         'prep_l': lambda st: apply_norms(st, [prep_norm, lnorm]),
-        'prep_qnn': lambda st: apply_norms(st, [prep_norm, apply_qnn])
-        'prep_qnn_l': lambda st: apply_norms(st, [prep_norm, apply_qnn, lnorm])
+        'prep_qnn': lambda st: apply_norms(st, [prep_norm, apply_qnn]),
+        'prep_qnn_l': lambda st: apply_norms(st, [prep_norm, apply_qnn, lnorm]),
     }
     return norm_fxns
 
