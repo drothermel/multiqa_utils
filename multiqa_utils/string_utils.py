@@ -46,6 +46,7 @@ def longest_common_substring(x: str, y: str) -> (int, int, int):
     # returning the maximum of all the subproblems
     return max(digonal_computation(), key=itemgetter(0), default=(0, 0, 0))
 
+
 def find_span_indices_in_passage(passage, spans):
     trie = CharTrie()
     for span in spans:

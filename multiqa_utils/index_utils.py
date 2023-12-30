@@ -86,6 +86,7 @@ def bm25_batch_query_dump(
 if __name__ == "__main__":
     print("Loading")
     import hydra as hyd
+
     hyd.initialize(version_base=None, config_path="../scripts/conf")
     cfg = hyd.compose(config_name="maqa")
     qmp_dev = du.get_data(cfg, "qmp_dev")

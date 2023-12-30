@@ -22,6 +22,7 @@ from elq.biencoder.biencoder import load_biencoder
 # https://github.com/facebookresearch/BLINK/tree/main/elq
 # but removed some of the code paths that I wasn't using.
 
+
 def load_default_entity_linking_models(args):
     logging.info(">> Loading ELQ models")
     models = _load_models(args)
@@ -196,7 +197,9 @@ def _process_biencoder_dataloader(samples, tokenizer, biencoder_params):
     }
     """
     period_token = 1012
-    max_sample_len = biencoder_params["max_context_length"] - 2 # [101] + sample + [102]
+    max_sample_len = (
+        biencoder_params["max_context_length"] - 2
+    )  # [101] + sample + [102]
     samples_text_tuple = []
     all_start_inds = []
     all_end_inds = []
@@ -218,20 +221,25 @@ def _process_biencoder_dataloader(samples, tokenizer, biencoder_params):
                 add_special_tokens=False,
                 return_offsets_mapping=True,
             )
-            all_tokens = title_encoded['input_ids'] + [period_token] + content_encoded['input_ids']
+            all_tokens = (
+                title_encoded['input_ids']
+                + [period_token]
+                + content_encoded['input_ids']
+            )
             title_lens.append(len(title_encoded['input_ids']))
             content_lens.append(len(content_encoded['input_ids']))
 
             title_max_offset = title_encoded['offset_mapping'][-1][-1]
             period_start = title_max_offset
             period_end = title_max_offset + 1
-            start_content_offset = period_end + 1 # for space
+            start_content_offset = period_end + 1  # for space
             all_offsets = (
-                title_encoded['offset_mapping'] +
-                [(period_start, period_end)] + 
-                [(
-                    s + start_content_offset, e + start_content_offset
-                ) for s, e in content_encoded['offset_mapping']]
+                title_encoded['offset_mapping']
+                + [(period_start, period_end)]
+                + [
+                    (s + start_content_offset, e + start_content_offset)
+                    for s, e in content_encoded['offset_mapping']
+                ]
             )
 
             if len(all_tokens) > max_sample_len and False:
@@ -246,7 +254,7 @@ def _process_biencoder_dataloader(samples, tokenizer, biencoder_params):
             padding = [
                 0
                 for _ in range(
-                biencoder_params["max_context_length"] - len(encoded_sample)
+                    biencoder_params["max_context_length"] - len(encoded_sample)
                 )
             ]
 
@@ -270,12 +278,14 @@ def _process_biencoder_dataloader(samples, tokenizer, biencoder_params):
 
     tensor_data_tuple = [torch.tensor(samples_text_tuple)]
     if all_start_inds is not None:
-        tensor_data_tuple.extend([
-            torch.tensor(all_start_inds),
-            torch.tensor(all_end_inds),
-            torch.tensor(title_lens),
-            torch.tensor(content_lens),
-        ])
+        tensor_data_tuple.extend(
+            [
+                torch.tensor(all_start_inds),
+                torch.tensor(all_end_inds),
+                torch.tensor(title_lens),
+                torch.tensor(content_lens),
+            ]
+        )
 
     tensor_data = TensorDataset(*tensor_data_tuple)
     sampler = SequentialSampler(tensor_data)
@@ -556,14 +566,7 @@ def _run_biencoder(
                     top_cand_logits[idx][left_align_mask[idx]].data.cpu().numpy()
                 )
 
-    return (
-        nns, 
-        dists, 
-        pred_mention_bounds, 
-        mention_scores, 
-        cand_scores
-    )
-
+    return (nns, dists, pred_mention_bounds, mention_scores, cand_scores)
 
 
 # Taken from BLINK/elq/main_dense.py#L380
@@ -629,7 +632,7 @@ def _get_and_save_predictions(
             ].tolist()  # filter out padding
             if len(batch_data) > 1:
                 # "Title. Content"
-                start_offset = 1 # 101
+                start_offset = 1  # 101
                 title_len = title_lens[b].item()
                 sep_len = 1
                 content_len = content_lens[b].item()
@@ -638,24 +641,22 @@ def _get_and_save_predictions(
                 title_s = start_offset
                 title_e = start_offset + title_len
                 content_s = title_e + sep_len
-                content_e = len(input_context) - 1 # remove 102
-                if False: # This asserts no truncation
+                content_e = len(input_context) - 1  # remove 102
+                if False:  # This asserts no truncation
                     assert content_e == content_s + content_len
                 title_toks = input_context[title_s:title_e]
                 content_toks = input_context[content_s:content_e]
                 title_tok_offsets = [
-                    (
-                        b_start_inds[i], b_end_inds[i]
-                    ) for i in range(title_s-start_offset, title_e - start_offset)
+                    (b_start_inds[i], b_end_inds[i])
+                    for i in range(title_s - start_offset, title_e - start_offset)
                 ]
                 content_offset = len(sample['title'] + '. ')
                 content_tok_offsets = [
-                    (b_start_inds[i] - content_offset, b_end_inds[i] - content_offset) for i in range(
-                        content_s - start_offset, content_e - start_offset
-                    )
+                    (b_start_inds[i] - content_offset, b_end_inds[i] - content_offset)
+                    for i in range(content_s - start_offset, content_e - start_offset)
                 ]
-                #title_strs = [sample['title'][s:e] for s, e in title_tok_offsets]
-                #content_strs = [sample['content'][s:e] for s, e in content_tok_offsets]
+                # title_strs = [sample['title'][s:e] for s, e in title_tok_offsets]
+                # content_strs = [sample['content'][s:e] for s, e in content_tok_offsets]
 
             # (num_pred_mentions, cands_per_mention)
             scores = dists[i] if args.threshold_type == "joint" else cand_scores[i]
@@ -724,18 +725,20 @@ def _get_and_save_predictions(
                 "scores": chosen_distances_pruned,
             }
             if 'text' in sample:
-                entity_results.update({
-                    "text": sample['text'],
-                    "pred_tuples_string": [
-                        [
-                            id2title[triple[0]],
-                            tokenizer.decode(input_context[triple[1] : triple[2]]),
-                        ]
-                        for triple in pred_triples
-                    ],
-                    "pred_triples": pred_triples,
-                    "tokens": input_context,
-                })
+                entity_results.update(
+                    {
+                        "text": sample['text'],
+                        "pred_tuples_string": [
+                            [
+                                id2title[triple[0]],
+                                tokenizer.decode(input_context[triple[1] : triple[2]]),
+                            ]
+                            for triple in pred_triples
+                        ],
+                        "pred_triples": pred_triples,
+                        "tokens": input_context,
+                    }
+                )
             else:
                 title_pred_triples = []
                 content_pred_triples = []
@@ -749,38 +752,34 @@ def _get_and_save_predictions(
                         title_tok_e = tok_e
                         title_str_s = title_tok_offsets[title_tok_s][0]
                         title_str_e = title_tok_offsets[title_tok_e - 1][1]
-                        title_pred_triples.append((
-                            ent_id, title_tok_s, title_tok_e
-                        ))
-                        title_pred_tuples_string.append([
-                            id2title[ent_id],
-                            sample['title'][title_str_s:title_str_e]
-                        ])
+                        title_pred_triples.append((ent_id, title_tok_s, title_tok_e))
+                        title_pred_tuples_string.append(
+                            [id2title[ent_id], sample['title'][title_str_s:title_str_e]]
+                        )
                     else:
                         cont_tok_s = tok_s - title_len - sep_len
                         cont_tok_e = tok_e - title_len - sep_len
                         cont_str_s = content_tok_offsets[cont_tok_s][0]
                         cont_str_e = content_tok_offsets[cont_tok_e - 1][1]
-                        content_pred_triples.append((
-                            ent_id, cont_tok_s, cont_tok_e
-                        ))
-                        content_pred_tuples_string.append([
-                            id2title[ent_id],
-                            sample['content'][cont_str_s:cont_str_e]
-                        ])
-                    
-                entity_results.update({
-                    'title': sample['title'],
-                    'content': sample['content'],
-                    'title_toks': title_toks,
-                    'content_toks': content_toks,
-                    'title_tok_text_offsets': title_tok_offsets,
-                    'content_tok_text_offsets': content_tok_offsets,
-                    'title_pred_triples': title_pred_triples,
-                    'title_pred_tuples_string': title_pred_tuples_string,
-                    'content_pred_triples': content_pred_triples,
-                    'content_pred_tuples_string': content_pred_tuples_string,
-                })
+                        content_pred_triples.append((ent_id, cont_tok_s, cont_tok_e))
+                        content_pred_tuples_string.append(
+                            [id2title[ent_id], sample['content'][cont_str_s:cont_str_e]]
+                        )
+
+                entity_results.update(
+                    {
+                        'title': sample['title'],
+                        'content': sample['content'],
+                        'title_toks': title_toks,
+                        'content_toks': content_toks,
+                        'title_tok_text_offsets': title_tok_offsets,
+                        'content_tok_text_offsets': content_tok_offsets,
+                        'title_pred_triples': title_pred_triples,
+                        'title_pred_tuples_string': title_pred_tuples_string,
+                        'content_pred_triples': content_pred_triples,
+                        'content_pred_tuples_string': content_pred_tuples_string,
+                    }
+                )
 
             all_entity_preds.append(entity_results)
             out_file.write(json.dumps(entity_results) + "\n")
@@ -819,9 +818,7 @@ def run_elq(
     assert getattr(args, "save_preds_dir", None) is not None
     logging.info(">> Running biencoder")
     start_time = time.time()
-    (
-        nns, dists, pred_mention_bounds, mention_scores, cand_scores
-    ) = _run_biencoder(
+    (nns, dists, pred_mention_bounds, mention_scores, cand_scores) = _run_biencoder(
         args,
         biencoder,
         dataloader,
@@ -863,5 +860,3 @@ def run_elq(
         threshold=threshold,
         mention_threshold=mention_threshold,
     )
-
-

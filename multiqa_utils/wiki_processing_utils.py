@@ -11,7 +11,8 @@ import multiqa_utils.string_utils as su
 
 
 def flatten_list_of_lists(list_of_lists):
-        return [l for sublist in list_of_list for l in sublist]
+    return [l for sublist in list_of_list for l in sublist]
+
 
 def merge_into_dict(dict1, dict2):
     for key, val_col2 in dict2.items():
@@ -20,13 +21,14 @@ def merge_into_dict(dict1, dict2):
         else:
             dict1[key] = val_col2
 
+
 def sum_into_dict(dict1, dict2):
     for k, v2 in dict2.items():
         if k not in dict1:
             dict1[k] = v2
         else:
             dict1[k] += v2
-    
+
 
 class WikiChunker(FileProcessor):
     def __init__(cfg):
@@ -76,7 +78,7 @@ class WikiChunker(FileProcessor):
         if len(fixed_page_data['text']) == 0:
             continue
 
-	# Get the spans and norm spans for all span types: 'links' and 'tags'
+        # Get the spans and norm spans for all span types: 'links' and 'tags'
         span_ent_lists = {}
         for link_type in ['tags', 'links']:
             wiki_key = self.raw_keys[link_type].wiki
@@ -138,7 +140,6 @@ class WikiChunker(FileProcessor):
                 continue
             span_ents.append({'span': span, 'ent': ent})
         return span_ents
-            
 
     # Used for cleaning wiki text before chunking, from qampari github
     # DataCreation/DataAlginment/utils/alignment_utils.py
@@ -159,11 +160,9 @@ class WikiChunker(FileProcessor):
             [[se['span'] for se in sel] for sel in span_ent_lists.values()]
         )
         span_indices = su.find_span_indices_in_passage(passage, all_spans)
-	sentences = sent_tokenize(passage)
-	chunks = self._combine_sentences_into_chunks(sentences)
-	chunks = self._associate_spans_with_chunks(
-            chunks, span_indices, span_ent_lists
-        )
+        sentences = sent_tokenize(passage)
+        chunks = self._combine_sentences_into_chunks(sentences)
+        chunks = self._associate_spans_with_chunks(chunks, span_indices, span_ent_lists)
         return chunks
 
     def _combine_sentences_into_chunks(self, sentences):
@@ -205,25 +204,30 @@ class WikiChunker(FileProcessor):
 
         return chunks
 
-    def _associate_spans_with_chunks(self, chunks, span_indices, span_type_to_spans_dict):
-	chunk_data = []
-	for chunk_start, chunk_end, chunk_text in chunks:
+    def _associate_spans_with_chunks(
+        self, chunks, span_indices, span_type_to_spans_dict
+    ):
+        chunk_data = []
+        for chunk_start, chunk_end, chunk_text in chunks:
             curr_data = {'content': chunk_text}
-            curr_data.update({span_type: [] for span_type in span_type_to_spans_dict}
-	    for span_type, spans in span_type_to_spans_dict.items():
-		for span, span_id in spans:
-		    for index in span_indices.get(span, []):
-			if chunk_start <= index < chunk_end:
+            curr_data.update({span_type: [] for span_type in span_type_to_spans_dict})
+            for span_type, spans in span_type_to_spans_dict.items():
+                for span, span_id in spans:
+                    for index in span_indices.get(span, []):
+                        if chunk_start <= index < chunk_end:
                             new_index = index - chunk_start
                             span_length = len(span)
-                            curr_data[span_type].append({
-                                'span': span,
-                                'ent': span_id,
-                                'start_ind': new_index,
-                                'end_ind': new_index + span_length,
-                            })
-	    chunk_data.append(curr_data)
-	return chunk_data
+                            curr_data[span_type].append(
+                                {
+                                    'span': span,
+                                    'ent': span_id,
+                                    'start_ind': new_index,
+                                    'end_ind': new_index + span_length,
+                                }
+                            )
+            chunk_data.append(curr_data)
+        return chunk_data
+
 
 class WikiMapper(FileProcessor):
     def __init__(cfg):
@@ -233,7 +237,7 @@ class WikiMapper(FileProcessor):
         self.chunked_dir = cfg.wiki_processing.wiki_chunked_dir
         self.mapped_dir = cfg.wiki_processing.wiki_mapped_dir
         self.tokenizer = tu.initialize_tokenizer(
-            cfg.tokenizer_config_path, # TODO: This doesn't work yet
+            cfg.tokenizer_config_path,  # TODO: This doesn't work yet
         )
 
         super().__init__(
@@ -301,7 +305,6 @@ class WikiMapper(FileProcessor):
             'str2nstr': str2nstr,
         }
         return mapped_chunk
-        
 
     # This is where we combine any shared structures
     def merge_results(self, file_output_list):
@@ -337,7 +340,9 @@ class WikiMapper(FileProcessor):
 
             for gk in ['span2ents', 'ref_ent2cids', 'ref_span2cids', 'cid2children']:
                 merge_into_dict(graphs[gk], pc['graphs'][gk])
-            merge_span2entdetailed(graphs['span2entdetailed'], pc['graphs']['span2entdetailed'])
+            merge_span2entdetailed(
+                graphs['span2entdetailed'], pc['graphs']['span2entdetailed']
+            )
 
             graphs['title_ent2cids'][chunk['title']].append(pc['cid'])
         mapped_data = {
@@ -350,16 +355,13 @@ class WikiMapper(FileProcessor):
         }
         return mapped_data
 
-
     def _get_token_info(self, chunk, link_types):
         title = chunk['title']
         contents = chunk['contents']
 
         title_toks = self.tokenizer.encode(title, add_special_tokens=False)
         encoded_w_offsets = self.tokenizer.encode(
-            contents,
-            add_special_tokens=False,
-            return_offsets_mapping=True
+            contents, add_special_tokens=False, return_offsets_mapping=True
         )
         token_info = {
             'title_toks': title_toks,
@@ -369,14 +371,18 @@ class WikiMapper(FileProcessor):
         }
         spans = flatten_list_of_lists([chunk[lt] for lt in link_types])
         token_info['spans_w_tok_inds'] = self._find_token_ranges(
-            passage, encoded_w_offsets, spans,
+            passage,
+            encoded_w_offsets,
+            spans,
         )
         return token_info
 
     def _find_token_ranges(self, passage, encoded_w_offsets, spans):
         # Tokenize the passage and get a mapping of token indices to character ranges
         char_to_token = [None] * len(passage)
-        for token_ind, (start_char, end_char) in enumerate(encoded_w_offsets.offset_mapping):
+        for token_ind, (start_char, end_char) in enumerate(
+            encoded_w_offsets.offset_mapping
+        ):
             for char_ind in range(start_char, end_char):
                 char_to_token[char_ind] = token_ind
 
@@ -389,23 +395,31 @@ class WikiMapper(FileProcessor):
             start_token_ind = char_to_token[start_char_ind]
             end_token_ind = char_to_token[end_char_ind]
 
-            updated_spans.append({
-                'span': span['span'],
-                'ent': span['ent'],
-                'span_inds': (start_char_ind, end_char_ind + 1),  # Make end index exclusive again
-                'tok_inds': (start_token_ind, end_token_ind + 1)  # Make end index exclusive
-            })
+            updated_spans.append(
+                {
+                    'span': span['span'],
+                    'ent': span['ent'],
+                    'span_inds': (
+                        start_char_ind,
+                        end_char_ind + 1,
+                    ),  # Make end index exclusive again
+                    'tok_inds': (
+                        start_token_ind,
+                        end_token_ind + 1,
+                    ),  # Make end index exclusive
+                }
+            )
 
         return updated_spans
 
     def _merge_span2entdetailed(self, dict1, dict2):
-        for key, subdict in dict2.items(): # span: {cid: ent: int}
-            if key not in dict1: # span
+        for key, subdict in dict2.items():  # span: {cid: ent: int}
+            if key not in dict1:  # span
                 dict1[key] = subdict
                 continue
 
-            for kk, subsubdict in subdict.items(): # cid: {ent: int}
-                if kk not in dict1[key]: # cid
+            for kk, subsubdict in subdict.items():  # cid: {ent: int}
+                if kk not in dict1[key]:  # cid
                     dict1[key][kk] = subsubdict
                     continue
 
@@ -413,13 +427,8 @@ class WikiMapper(FileProcessor):
                 sum_into_dict(dict1[key][kk], subsubdict)
 
 
-
-    
-
-
-
-
 # # ---- Old Mapper & Reducer Fxns ---- # #
+
 
 def get_mapped_file(cfg, input_name):
     mapped_dir = cfg.wiki_processing.wiki_mapped_dir
@@ -743,7 +752,6 @@ def glob_alpha_subsegs(alpha_path):
 
 def glob_all_wiki_files(top_wiki_dir):
     return sorted(glob.glob(f"{top_wiki_dir}[A-Z][A-Z]/wiki_[0-9][0-9]"))
-
 
 
 # ##################################

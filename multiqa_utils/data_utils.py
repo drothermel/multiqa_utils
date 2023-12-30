@@ -61,7 +61,6 @@ def get_base_data_path(cfg, dataset, split, raw=False):
 def get_annotated_data_path(cfg, dataset, split, annotation):
     data_dir = cfg.postp_data_dir
     return f"{data_dir}{dataset}_{split}_{annotation}_data.jsonl"
-    
 
 
 def get_linked_data_path(cfg, dataset, split, link_type, raw=False):
@@ -132,7 +131,9 @@ def get_data(
         if annotation is None:
             path = get_base_data_path(cfg, dataset_name, split, raw=raw)
         else:
-            path = get_annotated_data_path(cfg, dataset_name, split, annotation=annotation)
+            path = get_annotated_data_path(
+                cfg, dataset_name, split, annotation=annotation
+            )
     else:
         path = get_linked_data_path(cfg, dataset_name, split, link_type, raw=raw)
 

@@ -9,22 +9,23 @@ class PassageData(DataStruct):
         building=False,
     ):
         # used for building
-        self.pid2info = None        # dict
-        self.pid2oripid = None      # ArrayDict
-        self.paid2cid = None        # ArrayDict
-        self.paid2pid = None        # ArrayDict
-        self.pid2firstpaid = None   # ArrayDict
-        self.paid2text = None       # dict
-        self.tstr2pid = None        # Str2IntsDict
+        self.pid2info = None  # dict
+        self.pid2oripid = None  # ArrayDict
+        self.paid2cid = None  # ArrayDict
+        self.paid2pid = None  # ArrayDict
+        self.pid2firstpaid = None  # ArrayDict
+        self.paid2text = None  # dict
+        self.tstr2pid = None  # Str2IntsDict
         self.paid2tokeninfo = None  # dict
-        self.pid2tsidptsid = None   # ArrayDict
+        self.pid2tsidptsid = None  # ArrayDict
 
         super().__init__(
             data_dir,
             name,
             always_save_attrs={},
-            building,
+            building=building,
         )
+
 
 class NormManager(DataStruct):
     def __init__(
@@ -42,7 +43,6 @@ class NormManager(DataStruct):
             ],
             building=building,
         )
-
 
     def get_norm_data_name(self, norm_name, data_type):
         return f'{norm_name}__{data_type}'
@@ -94,12 +94,13 @@ class NormManager(DataStruct):
 
     def add_norm_type_data(self, norm_name, str2nstr_dict, str2sid_arraydict):
         assert self.building
-        
+
         # First build the norm data structs
         max_num_nsids = len(str2nstr_dict)
         nsid_dtype = smallest_np_int_type_for_range(0, max_num_nsids)
         sid2nsid, str2nsid, nstr2nsid = self._create_attrs_for_norm_type_data(
-            norm_name, nsid_dtype,
+            norm_name,
+            nsid_dtype,
         )
         next_nsid = 0
         for st, nst in str2nstr.items():
@@ -139,7 +140,7 @@ class NormManager(DataStruct):
                 comps_to_merge = set()
                 for s in sids:
                     comps_to_merge.add(sid2comp[s])
-                
+
                 if len(comps_to_merge) > 1:
                     new_comp = min(comps_to_merge)
                     for s in sids:
@@ -155,7 +156,3 @@ class NormManager(DataStruct):
             for s in sids:
                 sid2comp[s] = new_id
         return sid2comp, num_comps
-
-
-    
-
