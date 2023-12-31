@@ -88,9 +88,87 @@ def get_all_norm_fxns():
     return norm_fxns
 
 
+# ----- basic text cleaning ----- #
+
+def get_regexp_and_patterns():
+    # Pre-compile the regular expressions
+    patterns = {
+        "&lt;br&gt;": " ",
+        "&lt;/a&gt;]": "",
+        "&lt;onlyinclude&gt;": "",
+        "&lt;/onlyinclude&gt;": "",
+        "&lt;!--": "",
+        "&lt;": "<",
+        "&gt;": ">",
+        "&quot;": '"',
+        "&amp;": "&",
+        "\[\[Category:": "Category: ",
+        "\[\[": "",
+        "\]\]": "",
+    }
+    
+    # Compile a single regex pattern that matches any of the keys
+    regexp = re.compile('|'.join(re.escape(key) for key in patterns.keys()))
+    
+    # Use a lambda function to replace matched patterns
+    return regexp, patterns
+    
+
+def fix_html_strings(text, regexp, patterns):
+    # handle <ref> </ref>
+    text_split = text.split("&lt;/ref&gt;")
+    if len(text_split) != 1:
+        new_text_split = []
+        for ts in text_split:
+            tss = ts.split("&lt;ref")
+            new_text_split.append(tss[0]) # either full ts string or just the relev part
+        text = "".join(new_text_split)
+
+    # handle <a> </a>
+    text_split = text.split('&lt;a')
+    if len(text_split) != 1:
+        new_text_split = []
+        for i, ts in enumerate(text_split):
+            if i % 2 == 0:
+                new_text_split.append(ts)
+            else:
+                tss = ts.split('&lt;/a&gt;')
+                new_text_split.append(tss[-1])
+        text = "".join(new_text_split)
+
+    # handle <section begin=str> <section end=str>
+    text_split = text.split('&lt;section')
+    if len(text_split) != 1:
+        new_text_split = [text_split[0]]
+        #print(text_split)
+        for i, ts in enumerate(text_split[1:]):
+            tss = ts.split('/&gt;')
+            #print("tss", tss)
+            new_text_split.append(tss[1])
+        text = "".join(new_text_split)
+
+    def replace(match):
+        return patterns[match.group(0)]
+    text = regexp.sub(replace, text)
+    return text
+    
+
 def get_detokenizer():
     return MosesDetokenizer(lang="en")
 
+def check_valid_span(span):
+    if span is None or span == '' or span.strip() == '':
+        return False
+    return True
+
+def base_fix_string(detokenizer, text):
+    fixed_text = fix_html_strings(text, self.regexp, self.patterns)
+    if fixed_text is None or len(fixed_text) == 0:
+        return None
+    fixed_text = normalize(detokenizer, fixed_text)
+    if len(fixed_text) == 0:
+        return None
+    return fixed_text
 
 # From qampari github
 # Normalization used by qmp when loading in wiki title and text
@@ -215,5 +293,7 @@ def norm_links(text):
     if text is None or ("http" in text and "://" in text):
         return ""
     elif "#" in text:
-        text = text.split("#")[0]
+        ts = text.split('#')
+        if len(ts[0]) != 0 and len(ts[1]) != 0:
+            text = text.replace('#', ' ') 
     return text
