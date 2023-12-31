@@ -71,7 +71,7 @@ class WikiChunker(FileProcessor):
     def process_batch_elem(self, item):
         # Only process pages with text
         text = item['clean_text']
-        if len(text) == 0  or len(text.strip()) == 0:
+        if len(text) == 0 or len(text.strip()) == 0:
             return []
 
         # Get the desired input links to process
@@ -91,39 +91,39 @@ class WikiChunker(FileProcessor):
             chunk['contents'] = fixed_text
         return chunks
 
-	def _fix_text_title_links_dict(self, text, title, links_dict):
-		fixed_text = su.base_fix_string(self.detokenizer, text)
-		fixed_title = su.base_fix_string(self.detokenizer, title)
-		fixed_links_dict = {}
-		for link_type, link_list in links_dict.items():
-			fixed_links_dict[link_type] = []
-			fixed_links = self._span_ent_raw_input(link_list, link_type)
-			for fl_span, fl_ent in fixed_links:
-				if fl_span in fixed_text:
-					fixed_links_dict[link_type].append((fl_span, fl_ent))
-		return fixed_text, fixed_title, fixed_links_dict
+    def _fix_text_title_links_dict(self, text, title, links_dict):
+        fixed_text = su.base_fix_string(self.detokenizer, text)
+        fixed_title = su.base_fix_string(self.detokenizer, title)
+        fixed_links_dict = {}
+        for link_type, link_list in links_dict.items():
+            fixed_links_dict[link_type] = []
+            fixed_links = self._span_ent_raw_input(link_list, link_type)
+            for fl_span, fl_ent in fixed_links:
+                if fl_span in fixed_text:
+                    fixed_links_dict[link_type].append((fl_span, fl_ent))
+        return fixed_text, fixed_title, fixed_links_dict
 
-	def _span_ent_raw_input(self, in_list, link_type):
-		fixed_span_ents = []
-		for link_info in in_list:
-			span = link_info[self.raw_keys[link_type].span]
-			ent = link_info[self.raw_keys[link_type].ent]
-			fspan, fent = self._fix_span_ent(span, ent, link_type)
-			if fspan is not None and fent is not None:
-				fixed_span_ents.append((fspan, fent))
-		return fixed_span_ents
+    def _span_ent_raw_input(self, in_list, link_type):
+        fixed_span_ents = []
+        for link_info in in_list:
+            span = link_info[self.raw_keys[link_type].span]
+            ent = link_info[self.raw_keys[link_type].ent]
+            fspan, fent = self._fix_span_ent(span, ent, link_type)
+            if fspan is not None and fent is not None:
+                fixed_span_ents.append((fspan, fent))
+        return fixed_span_ents
 
-	def _fix_span_ent(self, span, ent, link_type):
-		if not su.check_valid_span(span) or not su.check_valid_span(ent):
-			return None, None
+    def _fix_span_ent(self, span, ent, link_type):
+        if not su.check_valid_span(span) or not su.check_valid_span(ent):
+            return None, None
 
-		if link_type == 'links':
-			span = su.norm_links(span)
-			ent = su.norm_links(ent)
+        if link_type == 'links':
+            span = su.norm_links(span)
+            ent = su.norm_links(ent)
 
-		span = su.base_fix_string(self.detokenizer, span)
-		ent = su.base_fix_string(self.detokenizer, ent)
-		return span, ent
+        span = su.base_fix_string(self.detokenizer, span)
+        ent = su.base_fix_string(self.detokenizer, ent)
+        return span, ent
 
     def _chunk_and_combine_passage(self, passage, span_ent_lists):
         all_spans = flatten_list_of_lists(
