@@ -7,6 +7,7 @@ import re
 import html
 
 from utils.parallel_utils import FileProcessor
+from utils.file_utils import fu
 import multiqa_utils.string_utils as su
 
 
@@ -28,6 +29,123 @@ def sum_into_dict(dict1, dict2):
             dict1[k] = v2
         else:
             dict1[k] += v2
+
+
+class DataManager:
+    def __init__(self, cfg):
+        self.cfg = cfg
+        self.stage_list = [
+            'chunking',
+            'linking',
+            'mapping',
+        ]
+        self.processing_state = None
+
+        self._load_or_create_processing_state()
+
+        # then it needs more info about what to do
+        # - [Currnently TODO] create sbatch for the next step in the data creation
+        #   pipeline based on the state file
+        #     -> see _write_stage_sbatch(self, stage) for the notes of whats next
+        #     -> at same time modifying maqa/scripts/conf/wiki_processing/v0.yaml
+        # - instantiate and shepherd the relevant stage's class
+        #   - [next] create a RedisLogger
+        #   - [next] create the stage class with the logger
+        #   - [next] handle the coordination
+        # - [future] load or use one of the data objects
+
+    def save_processing_state(self):
+        fu.dumpfile(self.processing_state, self.cfg.wiki_processing.state_path)
+
+    def get_next_processsing_stage(self):
+        for stage in self.stage_list:
+            if not self._validate_stage_complete(stage):
+                return stage
+        return None
+
+    def write_next_sbatch(self):
+        next_stage = self.get_next_processing_stage()
+        if next_stage is None:
+            logging.info(">> All stages completed already")
+            return
+
+        logging.info(f">> Next stage: {next_stage}")
+        sbatch_filename = self._write_stage_sbatch(next_stage)
+        logging.info(f">> Wrote sbatch: {sbatch_filename}")
+
+    def run_chunking(self):
+        pass
+
+    def run_linking(self):
+        pass
+
+    def _load_or_create_processing_state(self):
+        if os.path.exists(self.cfg.wiki_processing.state_path):
+            self.processing_state = fu.load_file(self.cfg.wiki_processing.state_path)
+            return
+
+        self.processing_state = {}
+        for stage_num, stage in enumerate(self.stage_list):
+            self.processing_state[stage] = {
+                'stage': stage,
+                'stage_num': stage_num,
+                'complete': False,
+                'expected_runs': None,
+                'written_runs': set(),
+                'verified_runs': set(),
+            }
+        self.save_processing_state()
+
+    def _validate_stage_complete(self, stage):
+        # If the stage is marked complete then its complete
+        if self.processing_state[stage]['complete']:
+            return True
+
+        # If expected runs is none then this stage hasn't be initialized
+        if self.processing_state[stage]['expected_runs'] is None:
+            return False
+
+        # If all expected runs have been verified complete, stage is complete
+        num_verified = self.processing_state[stage]['verified_runs']
+        num_expected = self.processing_state[stage]['expected_runs']
+        if len(num_verified - num_expected) == 0:
+            self.processing_state[stage]['complete'] = True
+            self.save_processing_state()
+            return True
+
+        # But otherwise the "complete = False" marker is correct
+        return False
+
+    def _write_stage_sbatch(self, stage):
+        # TODO: something with redis checks too
+
+        # For now, just using the state info
+        # Check if expected runs is none -> kick off all shards
+        # If not, compare written to expected -> kick off missing
+        # Write the sbatch config params in the section specific area of the
+        #    cfg file
+        # Probably just break reducing into 3 stages and run them in sequence
+        #    with 1 shard each
+
+        # Then the sbatch file runs cfg.wiki_processing.data_manager_script_path
+        #      (which should use the standard cfg params for distribution)
+        # with wikiprocessing.stage_to_run=stage
+        # and shard_num=XXX, shard_siz=XXX
+        # Then everything should be written to an sbatch file that has a random
+        #    component to its name so it doesn't overwrite previous ones
+        sbatch_filename = ''
+
+        # and the script should create a datamanager and call dm.run_<stage>()
+        # which will handle the creation of the RedisLogger to make sure
+        #   that this isn't already currently running and then mark ourselves as
+        #   running
+        #   and then create the relevant FileProcessor
+        # each of the FileProcessors should have a way to mark written runs as
+        #   verified (and we need to make sure the threads don't start until after
+        #   this happens)
+        # then only the cases where written runs aren't verified should actually
+        #   continue.
+        return sbatch_filename
 
 
 class WikiChunker(FileProcessor):
