@@ -34,16 +34,12 @@ class WikiChunker(FileProcessor):
     def __init__(self, cfg):
         self.cfg = cfg
         self.chunked_dir = cfg.wiki_processing.wiki_chunked_dir
-
-        self.link_types = cfg.wiki_processing.link_types
-        self.raw_keys = cfg.wiki_processing.raw_keys
         self.target_words = cfg.wiki_processing.chunk_target_word_len
         self.max_words = cfg.wiki_processing.chunk_max_word_len
 
         # Unused, but might be needed for word_tokenize and sent_tokenize to work
         self.tokenizer = load(f"tokenizers/punkt/english.pickle")
         self.detokenizer = su.get_detokenizer()
-        self.regexp, self.patterns = su.get_regexp_and_patterns()
 
         super().__init__(
             cfg.wiki_processing.num_threads,
@@ -73,68 +69,32 @@ class WikiChunker(FileProcessor):
         text = item['clean_text']
         if len(text) == 0 or len(text.strip()) == 0:
             return []
-
-        # Get the desired input links to process
-        links_dict = {k: item[self.raw_keys[k].wiki] for k in self.link_types}
         title = item['title']
 
-        fixed_text, fixed_title, fixed_span_ent_dict = self._fix_text_title_links_dict(
-            text, title, links_dict
-        )
-        chunks = self._chunk_and_combine_passage(fixed_text, fixed_span_ent_dict)
-
-        # Already have 'tags' and 'links' in each chunk
-        for chunk_id, chunk in enumerate(chunks):
-            chunk['page_id'] = int(item['id'])
-            chunk['title'] = fixed_title
-            chunk['chunk_id'] = chunk_id
-            chunk['contents'] = fixed_text
-        return chunks
-
-    def _fix_text_title_links_dict(self, text, title, links_dict):
+        # Normalize the text and title
         fixed_text = su.base_fix_string(self.detokenizer, text)
         fixed_title = su.base_fix_string(self.detokenizer, title)
-        fixed_links_dict = {}
-        for link_type, link_list in links_dict.items():
-            fixed_links_dict[link_type] = []
-            fixed_links = self._span_ent_raw_input(link_list, link_type)
-            for fl_span, fl_ent in fixed_links:
-                if fl_span in fixed_text:
-                    fixed_links_dict[link_type].append((fl_span, fl_ent))
-        return fixed_text, fixed_title, fixed_links_dict
 
-    def _span_ent_raw_input(self, in_list, link_type):
-        fixed_span_ents = []
-        for link_info in in_list:
-            span = link_info[self.raw_keys[link_type].span]
-            ent = link_info[self.raw_keys[link_type].ent]
-            fspan, fent = self._fix_span_ent(span, ent, link_type)
-            if fspan is not None and fent is not None:
-                fixed_span_ents.append((fspan, fent))
-        return fixed_span_ents
+        # Chunk the text
+        sentences = sent_tokenize(fixed_text)
+        raw_chunks = self._combine_sentences_into_chunks(sentences)
 
-    def _fix_span_ent(self, span, ent, link_type):
-        if not su.check_valid_span(span) or not su.check_valid_span(ent):
-            return None, None
-
-        if link_type == 'links':
-            span = su.norm_links(span)
-            ent = su.norm_links(ent)
-
-        span = su.base_fix_string(self.detokenizer, span)
-        ent = su.base_fix_string(self.detokenizer, ent)
-        return span, ent
-
-    def _chunk_and_combine_passage(self, passage, span_ent_lists):
-        all_spans = flatten_list_of_lists(
-            [[sp for sp, en in sel] for sel in span_ent_lists.values()]
-        )
-        span_indices = su.find_span_indices_in_passage(passage, all_spans)
-        sentences = sent_tokenize(passage)
-        chunks = self._combine_sentences_into_chunks(sentences)
-        chunks = self._associate_spans_with_chunks(chunks, span_indices, span_ent_lists)
+        # Convert to final output format
+        chunks = [
+            {
+                'page_id': int(item['id']),
+                'raw_title': title,
+                'title': fixed_title,
+                'chunk_num': c_i,
+                'chunk_text': c_text,
+                'chunk_start_ind': c_start,
+                'chunk_end_ind': c_end,
+            }
+            for c_i, (c_start, c_end, c_text) in enumerate(raw_chunks)
+        ]
         return chunks
 
+    # Returns: [(chunk_start_ind, chunk_end_ind, chunk_text), ...]
     def _combine_sentences_into_chunks(self, sentences):
         chunks = []
         current_chunk = []
@@ -173,30 +133,6 @@ class WikiChunker(FileProcessor):
             finalize_current_chunk()
 
         return chunks
-
-    def _associate_spans_with_chunks(
-        self, chunks, span_indices, span_type_to_spans_dict
-    ):
-        chunk_data = []
-        for chunk_start, chunk_end, chunk_text in chunks:
-            curr_data = {'content': chunk_text}
-            curr_data.update({span_type: [] for span_type in span_type_to_spans_dict})
-            for span_type, spans in span_type_to_spans_dict.items():
-                for span, ent in spans:
-                    for index in span_indices.get(span, []):
-                        if chunk_start <= index < chunk_end:
-                            new_index = index - chunk_start
-                            span_length = len(span)
-                            curr_data[span_type].append(
-                                {
-                                    'span': span,
-                                    'ent': ent,
-                                    'start_ind': new_index,
-                                    'end_ind': new_index + span_length,
-                                }
-                            )
-            chunk_data.append(curr_data)
-        return chunk_data
 
 
 class WikiMapper(FileProcessor):
