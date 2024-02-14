@@ -147,6 +147,57 @@ class DataManager:
         #   continue.
         return sbatch_filename
 
+    def _create_sbatch(self, stage):
+        # TODO: pass these in somehow?
+        array_start = 0
+        array_end = 0
+        run_time = '23:59:00'
+        use_gpu = False
+        mem = '220G'
+        num_cpus = 8
+        script_path = self.cfg.wiki_processing.data_manager_script_path
+        # TODO: add the rest of the args
+        script_args = {
+            'wiki_processing.stage_to_run': stage,
+            'shard_num': '${SLURM_ARRAY_TASK_ID}',
+        }
+        script_args_str = ' '.join([f'{name}={val}' for name, val in script_args.items()])
+
+        # Setup the SBATCH args
+        sbatch_params = {
+            'job-name': stage,
+            'array': f'{int(array_start)}-{int(array_end)}',
+            'open-mode': 'append',
+            'output': '/scratch/ddr8143/multiqa/slurm_logs/%x_%A_j%a.out',
+            'error': '/scratch/ddr8143/multiqa/slurm_logs/%x_%A_j%a.err',
+            'export': 'ALL',
+            'time': run_time,
+            'mem': mem,
+            'nodes': '1',
+            'tasks-per-node': '1',
+            'cpus-per-task': str(num_cpus),
+        }
+        if use_gpu:
+            sbatch_params['gres'] = 'gpu:rtx8000:1'
+            sbatch_params['account'] = 'cds'
+
+        # Build the rest of the file
+        file_lines = ['#!/bin/bash\n']
+        file_lines.extend([
+            f'#SBATCH --{name}={val}\n' for name, val in sbatch_params.items()
+        ])
+        file_lines.extend([
+            '\n',
+            'singularity exec --nv --overlay $SCRATCH/overlay-50G-10M_v2.ext3:ro /scratch/work/public/singularity/cuda10.1-cudnn7-devel-ubuntu18.04-20201207.sif /bin/bash -c "\n'
+            '\n'
+            'source /ext3/env.sh\n',
+            'conda activate multiqa\n',
+            '\n',
+            f'python {script_path} {script_args_str} \n',
+            '"\n',
+        ])
+        return file_lines
+
 
 class WikiChunker(FileProcessor):
     def __init__(self, cfg):
