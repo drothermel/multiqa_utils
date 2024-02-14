@@ -1,6 +1,9 @@
 from nltk.tokenize import word_tokenize, sent_tokenize
 from nltk.data import load
 import os
+import string
+import random
+import logging
 
 # Used for processing new wiki dump
 import re
@@ -71,13 +74,15 @@ class DataManager:
             return
 
         logging.info(f">> Next stage: {next_stage}")
-        sbatch_filename = self._write_stage_sbatch(next_stage)
-        logging.info(f">> Wrote sbatch: {sbatch_filename}")
+        self._write_stage_sbatch(next_stage)
 
     def run_chunking(self):
         pass
 
     def run_linking(self):
+        pass
+
+    def run_mapping(self):
         pass
 
     def _load_or_create_processing_state(self):
@@ -122,49 +127,38 @@ class DataManager:
         # But otherwise the "complete = False" marker is correct
         return False
 
+    # The sbatch writing only chekcs the state file, not RedisLogger, and
+    # only considers the jobs that have already been marked verified as 
+    # complete.  Additional checks happen at startup of the jobs kicked off
+    # by the sbatch script.
     def _write_stage_sbatch(self, stage):
-        # TODO: something with redis checks too
+        state = self.processing_state[stage]
 
-        # For now, just using the state info
-        # Check if expected runs is none -> kick off all shards
-        # If not, compare written to expected -> kick off missing
-        # Write the sbatch config params in the section specific area of the
-        #    cfg file
-        # Probably just break reducing into 3 stages and run them in sequence
-        #    with 1 shard each
+        # Determine which inds to run (conservatively)
+        inds_to_run = []
+        if state['expected_runs'] is None:
+            num_shards = cfg.wiki_processing[stage].sbatch.num_shards
+            state['expected_runs'] = set([i for i in range(num_shards)])
+        inds_to_run = state['expected_runs'] - state['verified_runs']
+        if len(inds_to_run) == 0:
+            logging.info(f">> All inds for this stage ({stage})have been run.")
+            return
 
-        # Then the sbatch file runs cfg.wiki_processing.data_manager_script_path
-        #      (which should use the standard cfg params for distribution)
-        # with wikiprocessing.stage_to_run=stage
-        # and shard_num=XXX, shard_siz=XXX
         # Then everything should be written to an sbatch file that has a random
         #    component to its name so it doesn't overwrite previous ones
-        sbatch_filename = ''
+        sbatch_file_lines = self._create_sbatch(stage, inds_to_run)
+        rand_v = ''.join(random.choices(
+            string.ascii_letters + string.digits,
+            k=4,
+        ))
+        sbatch_filename = f'{self.cfg.wiki_processing.sbatch_dir}{stage}.{rand_v}.sbatch'
+        fu.dump_file(sbatch_file_lines, sbatch_filename, ending='txt', verbose=True)
 
-        # and the script should create a datamanager and call dm.run_<stage>()
-        # which will handle the creation of the RedisLogger to make sure
-        #   that this isn't already currently running and then mark ourselves as
-        #   running
-        #   and then create the relevant FileProcessor
-        # each of the FileProcessors should have a way to mark written runs as
-        #   verified (and we need to make sure the threads don't start until after
-        #   this happens)
-        # then only the cases where written runs aren't verified should actually
-        #   continue.
-        return sbatch_filename
-
-    def _create_sbatch(self, stage):
-        # TODO: pass these in somehow?
-        array_start = 0
-        array_end = 0
-        run_time = '23:59:00'
-        use_gpu = False
-        mem = '220G'
-        num_cpus = 8
+    def _create_sbatch(self, stage, shards_to_run):
         script_path = self.cfg.wiki_processing.data_manager_script_path
         # TODO: add the rest of the args
         script_args = {
-            'wiki_processing.stage_to_run': stage,
+            'wiki_processing.stage_to_run': stage, # only thing directly used in script file
             'shard_num': '${SLURM_ARRAY_TASK_ID}',
         }
         script_args_str = ' '.join([f'{name}={val}' for name, val in script_args.items()])
@@ -172,18 +166,18 @@ class DataManager:
         # Setup the SBATCH args
         sbatch_params = {
             'job-name': stage,
-            'array': f'{int(array_start)}-{int(array_end)}',
+            'array': self.get_array_str(shards_to_run),
             'open-mode': 'append',
             'output': '/scratch/ddr8143/multiqa/slurm_logs/%x_%A_j%a.out',
             'error': '/scratch/ddr8143/multiqa/slurm_logs/%x_%A_j%a.err',
             'export': 'ALL',
-            'time': run_time,
-            'mem': mem,
+            'time': self.cfg.wiki_processing[stage].sbatch.run_time,
+            'mem': self.cfg.wiki_processing[stage].sbatch.mem,
             'nodes': '1',
             'tasks-per-node': '1',
-            'cpus-per-task': str(num_cpus),
+            'cpus-per-task': str(self.cfg.wiki_processing[stage].sbatch.num_cpus),
         }
-        if use_gpu:
+        if self.cfg.wiki_processing[stage].sbatch.use_gpu:
             sbatch_params['gres'] = 'gpu:rtx8000:1'
             sbatch_params['account'] = 'cds'
 
@@ -203,6 +197,23 @@ class DataManager:
             '"\n',
         ])
         return file_lines
+
+    # TODO: make this a util
+    def _get_array_str(self, shards_to_run):
+        if not shards_to_run:
+            return "" # TODO: is this what I want?
+        sorted_inds = sorted(shards_to_run)
+        array_str = ""
+        start_range = sorted_inds[0]
+        prev = start_range
+        for s in sorted_inds[1:]:
+            if s != prev + 1:
+                array_str += f"{start_range}-{prev}," if start_range != prev else f"{prev},"
+                start_range = s
+            prev = s
+        array_str += f"{start_range}-{prev}" if start_range != prev else f"{prev}"
+        return array_str
+
 
 
 class WikiChunker(FileProcessor):
