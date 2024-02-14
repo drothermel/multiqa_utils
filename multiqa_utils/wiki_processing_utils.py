@@ -63,6 +63,7 @@ class DataManager:
                 return stage
         return None
 
+    # Get the next incomplete stage & write the expected sbatch file
     def write_next_sbatch(self):
         next_stage = self.get_next_processing_stage()
         if next_stage is None:
@@ -82,10 +83,15 @@ class DataManager:
     def _load_or_create_processing_state(self):
         if os.path.exists(self.cfg.wiki_processing.state_path):
             self.processing_state = fu.load_file(self.cfg.wiki_processing.state_path)
-            return
+        else:
+            self.processing_state = {}
 
-        self.processing_state = {}
         for stage_num, stage in enumerate(self.stage_list):
+            if stage in self.processing_state:
+                # It was loaded from the state file
+                continue
+
+            # Initialize the missing state info
             self.processing_state[stage] = {
                 'stage': stage,
                 'stage_num': stage_num,
