@@ -9,6 +9,7 @@ import logging
 import re
 import html
 
+from utils.redis_utils import RedisLogger
 from utils.parallel_utils import FileProcessor
 from utils.file_utils import fu
 import multiqa_utils.string_utils as su
@@ -43,19 +44,10 @@ class DataManager:
             'mapping',
         ]
         self.processing_state = None
+        self.logger = None
+        self.stage_class = None
 
         self._load_or_create_processing_state()
-
-        # then it needs more info about what to do
-        # - [Currnently TODO] create sbatch for the next step in the data creation
-        #   pipeline based on the state file
-        #     -> see _write_stage_sbatch(self, stage) for the notes of whats next
-        #     -> at same time modifying maqa/scripts/conf/wiki_processing/v0.yaml
-        # - instantiate and shepherd the relevant stage's class
-        #   - [next] create a RedisLogger
-        #   - [next] create the stage class with the logger
-        #   - [next] handle the coordination
-        # - [future] load or use one of the data objects
 
     def save_processing_state(self):
         fu.dumpfile(self.processing_state, self.cfg.wiki_processing.state_path)
@@ -77,13 +69,21 @@ class DataManager:
         self._write_stage_sbatch(next_stage)
 
     def run_chunking(self):
-        pass
+        self.stage_class = WikiChunker(self.cfg)
+        job_starting = self._verify_job_start('chunking')
+        if not job_starting:
+            logging.info(">> Chunking job already ran or is already running, skipping")
+            self.stage_class = None
+            return
+        logging.info(">> Running chunking job")
+        self.stage_class.select_job_files()
+        self.stage_class.execute()
 
     def run_linking(self):
-        pass
+        job_starting = self._verify_job_start('linking')
 
     def run_mapping(self):
-        pass
+        job_starting = self._verify_job_start('mapping')
 
     def _load_or_create_processing_state(self):
         if os.path.exists(self.cfg.wiki_processing.state_path):
@@ -107,6 +107,7 @@ class DataManager:
             }
         self.save_processing_state()
 
+    # Only call in the sbatch creation flow
     def _validate_stage_complete(self, stage):
         # If the stage is marked complete then its complete
         if self.processing_state[stage]['complete']:
@@ -124,6 +125,9 @@ class DataManager:
             self.save_processing_state()
             return True
 
+        # TODO: this is where we should run verification for the stage
+        # and update the state if verification is done.
+
         # But otherwise the "complete = False" marker is correct
         return False
 
@@ -139,6 +143,7 @@ class DataManager:
         if state['expected_runs'] is None:
             num_shards = cfg.wiki_processing[stage].sbatch.num_shards
             state['expected_runs'] = set([i for i in range(num_shards)])
+
         inds_to_run = state['expected_runs'] - state['verified_runs']
         if len(inds_to_run) == 0:
             logging.info(f">> All inds for this stage ({stage})have been run.")
@@ -159,7 +164,8 @@ class DataManager:
         # TODO: add the rest of the args
         script_args = {
             'wiki_processing.stage_to_run': stage, # only thing directly used in script file
-            'shard_num': '${SLURM_ARRAY_TASK_ID}',
+            'shard_num': self.cfg.wiki_processing[stage].sbatch.num_shards,
+            'shard_ind': '${SLURM_ARRAY_TASK_ID}',
         }
         script_args_str = ' '.join([f'{name}={val}' for name, val in script_args.items()])
 
@@ -214,10 +220,35 @@ class DataManager:
         array_str += f"{start_range}-{prev}" if start_range != prev else f"{prev}"
         return array_str
 
+    def _verify_job_start(self, stage):
+        self.logger = RedisLogger(
+            config_file=cfg.redis_config_file,
+            server_dir=cfg.redis_server_dir,
+        )
+        job_name = f'{stage}_{cfg.shard_num}'
+        if self.logger.check_is_job_running(job_name):
+            return False
+
+        # If job isn't running, call verify on stage class
+        job_finished = self.stage_class.check_is_job_finished()
+        if job_finished:
+            return False
+
+        # Otherwise, we're running!
+        self.logger.mark_job_running(job_name)
+        return True
+
 
 
 class WikiChunker(FileProcessor):
     def __init__(self, cfg):
+        super().__init__(
+            cfg.wiki_processing.chunking.num_threads,
+            cfg.wiki_processing.chunking.num_procs,
+            cfg.wiki_processing.chunking.proc_batch_size,
+            skip_exists=cfg.wiki_processing.chunking.skip_exists,
+        )
+
         self.cfg = cfg
         self.chunked_dir = cfg.wiki_processing.wiki_chunked_dir
         self.target_words = cfg.wiki_processing.chunk_target_word_len
@@ -227,12 +258,11 @@ class WikiChunker(FileProcessor):
         self.tokenizer = load(f"tokenizers/punkt/english.pickle")
         self.detokenizer = su.get_detokenizer()
 
-        super().__init__(
-            cfg.wiki_processing.num_threads,
-            cfg.wiki_processing.num_procs,
-            cfg.wiki_processing.proc_batch_size,
-            skip_exists=cfg.wiki_processing.skip_exists,
-        )
+
+    def select_job_files(self):
+        # TODO: get files from config
+        self.files = []
+        assert False
 
     def get_output_from_inpath(self, file_path):
         # basepath/AA/wiki_00
@@ -249,7 +279,7 @@ class WikiChunker(FileProcessor):
     def merge_results(self, file_output_list):
         return flatten_list_of_lists(file_output_list)
 
-    # CPU intensive task: chunking and tag/link matching
+    # CPU intensive task: chunking
     def process_batch_elem(self, item):
         # Only process pages with text
         text = item['clean_text']
@@ -279,6 +309,9 @@ class WikiChunker(FileProcessor):
             for c_i, (c_start, c_end, c_text) in enumerate(raw_chunks)
         ]
         return chunks
+
+    def check_is_job_running(self, job_name):
+        assert False
 
     # Returns: [(chunk_start_ind, chunk_end_ind, chunk_text), ...]
     def _combine_sentences_into_chunks(self, sentences):
