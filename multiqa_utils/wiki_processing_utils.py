@@ -1,12 +1,17 @@
 from nltk.tokenize import word_tokenize, sent_tokenize
 from nltk.data import load
 import os
+import string
+import random
+import logging
 
 # Used for processing new wiki dump
 import re
 import html
 
+from utils.redis_utils import RedisLogger
 from utils.parallel_utils import FileProcessor
+from utils.file_utils import fu
 import multiqa_utils.string_utils as su
 
 
@@ -30,8 +35,229 @@ def sum_into_dict(dict1, dict2):
             dict1[k] += v2
 
 
+class DataManager:
+    def __init__(self, cfg):
+        self.cfg = cfg
+        self.stage_list = [
+            'chunking',
+            'linking',
+            'mapping',
+        ]
+        self.processing_state = None
+        self.logger = None
+        self.stage_class = None
+
+        self._load_or_create_processing_state()
+
+    def save_processing_state(self):
+        fu.dumpfile(self.processing_state, self.cfg.wiki_processing.state_path)
+
+    def get_next_processsing_stage(self):
+        for stage in self.stage_list:
+            if not self._validate_stage_complete(stage):
+                return stage
+        return None
+
+    # Get the next incomplete stage & write the expected sbatch file
+    def write_next_sbatch(self):
+        next_stage = self.get_next_processing_stage()
+        if next_stage is None:
+            logging.info(">> All stages completed already")
+            return
+
+        logging.info(f">> Next stage: {next_stage}")
+        self._write_stage_sbatch(next_stage)
+
+    def run_chunking(self):
+        self.stage_class = WikiChunker(self.cfg)
+        job_starting = self._verify_job_start('chunking')
+        if not job_starting:
+            logging.info(">> Chunking job already ran or is already running, skipping")
+            self.stage_class = None
+            return
+        logging.info(">> Running chunking job")
+        self.stage_class.select_job_files()
+        self.stage_class.execute()
+
+    def run_linking(self):
+        job_starting = self._verify_job_start('linking')
+
+    def run_mapping(self):
+        job_starting = self._verify_job_start('mapping')
+
+    def _load_or_create_processing_state(self):
+        if os.path.exists(self.cfg.wiki_processing.state_path):
+            self.processing_state = fu.load_file(self.cfg.wiki_processing.state_path)
+        else:
+            self.processing_state = {}
+
+        for stage_num, stage in enumerate(self.stage_list):
+            if stage in self.processing_state:
+                # It was loaded from the state file
+                continue
+
+            # Initialize the missing state info
+            self.processing_state[stage] = {
+                'stage': stage,
+                'stage_num': stage_num,
+                'complete': False,
+                'expected_runs': None,
+                'written_runs': set(),
+                'verified_runs': set(),
+            }
+        self.save_processing_state()
+
+    # Only call in the sbatch creation flow
+    def _validate_stage_complete(self, stage):
+        # If the stage is marked complete then its complete
+        if self.processing_state[stage]['complete']:
+            return True
+
+        # If expected runs is none then this stage hasn't be initialized
+        if self.processing_state[stage]['expected_runs'] is None:
+            return False
+
+        # If all expected runs have been verified complete, stage is complete
+        num_verified = self.processing_state[stage]['verified_runs']
+        num_expected = self.processing_state[stage]['expected_runs']
+        if len(num_verified - num_expected) == 0:
+            self.processing_state[stage]['complete'] = True
+            self.save_processing_state()
+            return True
+
+        # TODO: this is where we should run verification for the stage
+        # and update the state if verification is done.
+
+        # But otherwise the "complete = False" marker is correct
+        return False
+
+    # The sbatch writing only chekcs the state file, not RedisLogger, and
+    # only considers the jobs that have already been marked verified as
+    # complete.  Additional checks happen at startup of the jobs kicked off
+    # by the sbatch script.
+    def _write_stage_sbatch(self, stage):
+        state = self.processing_state[stage]
+
+        # Determine which inds to run (conservatively)
+        inds_to_run = []
+        if state['expected_runs'] is None:
+            num_shards = cfg.wiki_processing[stage].sbatch.num_shards
+            state['expected_runs'] = set([i for i in range(num_shards)])
+
+        inds_to_run = state['expected_runs'] - state['verified_runs']
+        if len(inds_to_run) == 0:
+            logging.info(f">> All inds for this stage ({stage})have been run.")
+            return
+
+        # Then everything should be written to an sbatch file that has a random
+        #    component to its name so it doesn't overwrite previous ones
+        sbatch_file_lines = self._create_sbatch(stage, inds_to_run)
+        rand_v = ''.join(
+            random.choices(
+                string.ascii_letters + string.digits,
+                k=4,
+            )
+        )
+        sbatch_filename = (
+            f'{self.cfg.wiki_processing.sbatch_dir}{stage}.{rand_v}.sbatch'
+        )
+        fu.dump_file(sbatch_file_lines, sbatch_filename, ending='txt', verbose=True)
+
+    def _create_sbatch(self, stage, shards_to_run):
+        script_path = self.cfg.wiki_processing.data_manager_script_path
+        # TODO: add the rest of the args
+        script_args = {
+            'wiki_processing.stage_to_run': stage,  # only thing directly used in script file
+            'shard_num': self.cfg.wiki_processing[stage].sbatch.num_shards,
+            'shard_ind': '${SLURM_ARRAY_TASK_ID}',
+        }
+        script_args_str = ' '.join(
+            [f'{name}={val}' for name, val in script_args.items()]
+        )
+
+        # Setup the SBATCH args
+        sbatch_params = {
+            'job-name': stage,
+            'array': self.get_array_str(shards_to_run),
+            'open-mode': 'append',
+            'output': '/scratch/ddr8143/multiqa/slurm_logs/%x_%A_j%a.out',
+            'error': '/scratch/ddr8143/multiqa/slurm_logs/%x_%A_j%a.err',
+            'export': 'ALL',
+            'time': self.cfg.wiki_processing[stage].sbatch.run_time,
+            'mem': self.cfg.wiki_processing[stage].sbatch.mem,
+            'nodes': '1',
+            'tasks-per-node': '1',
+            'cpus-per-task': str(self.cfg.wiki_processing[stage].sbatch.num_cpus),
+        }
+        if self.cfg.wiki_processing[stage].sbatch.use_gpu:
+            sbatch_params['gres'] = 'gpu:rtx8000:1'
+            sbatch_params['account'] = 'cds'
+
+        # Build the rest of the file
+        file_lines = ['#!/bin/bash\n']
+        file_lines.extend(
+            [f'#SBATCH --{name}={val}\n' for name, val in sbatch_params.items()]
+        )
+        file_lines.extend(
+            [
+                '\n',
+                'singularity exec --nv --overlay $SCRATCH/overlay-50G-10M_v2.ext3:ro /scratch/work/public/singularity/cuda10.1-cudnn7-devel-ubuntu18.04-20201207.sif /bin/bash -c "\n'
+                '\n'
+                'source /ext3/env.sh\n',
+                'conda activate multiqa\n',
+                '\n',
+                f'python {script_path} {script_args_str} \n',
+                '"\n',
+            ]
+        )
+        return file_lines
+
+    # TODO: make this a util
+    def _get_array_str(self, shards_to_run):
+        if not shards_to_run:
+            return ""  # TODO: is this what I want?
+        sorted_inds = sorted(shards_to_run)
+        array_str = ""
+        start_range = sorted_inds[0]
+        prev = start_range
+        for s in sorted_inds[1:]:
+            if s != prev + 1:
+                array_str += (
+                    f"{start_range}-{prev}," if start_range != prev else f"{prev},"
+                )
+                start_range = s
+            prev = s
+        array_str += f"{start_range}-{prev}" if start_range != prev else f"{prev}"
+        return array_str
+
+    def _verify_job_start(self, stage):
+        self.logger = RedisLogger(
+            config_file=cfg.redis_config_file,
+            server_dir=cfg.redis_server_dir,
+        )
+        job_name = f'{stage}_{cfg.shard_num}'
+        if self.logger.check_is_job_running(job_name):
+            return False
+
+        # If job isn't running, call verify on stage class
+        job_finished = self.stage_class.check_is_job_finished()
+        if job_finished:
+            return False
+
+        # Otherwise, we're running!
+        self.logger.mark_job_running(job_name)
+        return True
+
+
 class WikiChunker(FileProcessor):
     def __init__(self, cfg):
+        super().__init__(
+            cfg.wiki_processing.chunking.num_threads,
+            cfg.wiki_processing.chunking.num_procs,
+            cfg.wiki_processing.chunking.proc_batch_size,
+            skip_exists=cfg.wiki_processing.chunking.skip_exists,
+        )
+
         self.cfg = cfg
         self.chunked_dir = cfg.wiki_processing.wiki_chunked_dir
         self.target_words = cfg.wiki_processing.chunk_target_word_len
@@ -41,12 +267,10 @@ class WikiChunker(FileProcessor):
         self.tokenizer = load(f"tokenizers/punkt/english.pickle")
         self.detokenizer = su.get_detokenizer()
 
-        super().__init__(
-            cfg.wiki_processing.num_threads,
-            cfg.wiki_processing.num_procs,
-            cfg.wiki_processing.proc_batch_size,
-            skip_exists=cfg.wiki_processing.skip_exists,
-        )
+    def select_job_files(self):
+        # TODO: get files from config
+        self.files = []
+        assert False
 
     def get_output_from_inpath(self, file_path):
         # basepath/AA/wiki_00
@@ -63,7 +287,7 @@ class WikiChunker(FileProcessor):
     def merge_results(self, file_output_list):
         return flatten_list_of_lists(file_output_list)
 
-    # CPU intensive task: chunking and tag/link matching
+    # CPU intensive task: chunking
     def process_batch_elem(self, item):
         # Only process pages with text
         text = item['clean_text']
@@ -93,6 +317,9 @@ class WikiChunker(FileProcessor):
             for c_i, (c_start, c_end, c_text) in enumerate(raw_chunks)
         ]
         return chunks
+
+    def check_is_job_running(self, job_name):
+        assert False
 
     # Returns: [(chunk_start_ind, chunk_end_ind, chunk_text), ...]
     def _combine_sentences_into_chunks(self, sentences):
