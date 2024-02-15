@@ -132,7 +132,7 @@ class DataManager:
         return False
 
     # The sbatch writing only chekcs the state file, not RedisLogger, and
-    # only considers the jobs that have already been marked verified as 
+    # only considers the jobs that have already been marked verified as
     # complete.  Additional checks happen at startup of the jobs kicked off
     # by the sbatch script.
     def _write_stage_sbatch(self, stage):
@@ -152,22 +152,28 @@ class DataManager:
         # Then everything should be written to an sbatch file that has a random
         #    component to its name so it doesn't overwrite previous ones
         sbatch_file_lines = self._create_sbatch(stage, inds_to_run)
-        rand_v = ''.join(random.choices(
-            string.ascii_letters + string.digits,
-            k=4,
-        ))
-        sbatch_filename = f'{self.cfg.wiki_processing.sbatch_dir}{stage}.{rand_v}.sbatch'
+        rand_v = ''.join(
+            random.choices(
+                string.ascii_letters + string.digits,
+                k=4,
+            )
+        )
+        sbatch_filename = (
+            f'{self.cfg.wiki_processing.sbatch_dir}{stage}.{rand_v}.sbatch'
+        )
         fu.dump_file(sbatch_file_lines, sbatch_filename, ending='txt', verbose=True)
 
     def _create_sbatch(self, stage, shards_to_run):
         script_path = self.cfg.wiki_processing.data_manager_script_path
         # TODO: add the rest of the args
         script_args = {
-            'wiki_processing.stage_to_run': stage, # only thing directly used in script file
+            'wiki_processing.stage_to_run': stage,  # only thing directly used in script file
             'shard_num': self.cfg.wiki_processing[stage].sbatch.num_shards,
             'shard_ind': '${SLURM_ARRAY_TASK_ID}',
         }
-        script_args_str = ' '.join([f'{name}={val}' for name, val in script_args.items()])
+        script_args_str = ' '.join(
+            [f'{name}={val}' for name, val in script_args.items()]
+        )
 
         # Setup the SBATCH args
         sbatch_params = {
@@ -189,32 +195,36 @@ class DataManager:
 
         # Build the rest of the file
         file_lines = ['#!/bin/bash\n']
-        file_lines.extend([
-            f'#SBATCH --{name}={val}\n' for name, val in sbatch_params.items()
-        ])
-        file_lines.extend([
-            '\n',
-            'singularity exec --nv --overlay $SCRATCH/overlay-50G-10M_v2.ext3:ro /scratch/work/public/singularity/cuda10.1-cudnn7-devel-ubuntu18.04-20201207.sif /bin/bash -c "\n'
-            '\n'
-            'source /ext3/env.sh\n',
-            'conda activate multiqa\n',
-            '\n',
-            f'python {script_path} {script_args_str} \n',
-            '"\n',
-        ])
+        file_lines.extend(
+            [f'#SBATCH --{name}={val}\n' for name, val in sbatch_params.items()]
+        )
+        file_lines.extend(
+            [
+                '\n',
+                'singularity exec --nv --overlay $SCRATCH/overlay-50G-10M_v2.ext3:ro /scratch/work/public/singularity/cuda10.1-cudnn7-devel-ubuntu18.04-20201207.sif /bin/bash -c "\n'
+                '\n'
+                'source /ext3/env.sh\n',
+                'conda activate multiqa\n',
+                '\n',
+                f'python {script_path} {script_args_str} \n',
+                '"\n',
+            ]
+        )
         return file_lines
 
     # TODO: make this a util
     def _get_array_str(self, shards_to_run):
         if not shards_to_run:
-            return "" # TODO: is this what I want?
+            return ""  # TODO: is this what I want?
         sorted_inds = sorted(shards_to_run)
         array_str = ""
         start_range = sorted_inds[0]
         prev = start_range
         for s in sorted_inds[1:]:
             if s != prev + 1:
-                array_str += f"{start_range}-{prev}," if start_range != prev else f"{prev},"
+                array_str += (
+                    f"{start_range}-{prev}," if start_range != prev else f"{prev},"
+                )
                 start_range = s
             prev = s
         array_str += f"{start_range}-{prev}" if start_range != prev else f"{prev}"
@@ -239,7 +249,6 @@ class DataManager:
         return True
 
 
-
 class WikiChunker(FileProcessor):
     def __init__(self, cfg):
         super().__init__(
@@ -257,7 +266,6 @@ class WikiChunker(FileProcessor):
         # Unused, but might be needed for word_tokenize and sent_tokenize to work
         self.tokenizer = load(f"tokenizers/punkt/english.pickle")
         self.detokenizer = su.get_detokenizer()
-
 
     def select_job_files(self):
         # TODO: get files from config
