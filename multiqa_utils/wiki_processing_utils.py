@@ -81,6 +81,7 @@ class DataManager:
             self.stage_class = None
             return
         logging.info(">> Running chunking job")
+        self.stage_class.set_logger(self.logger)
         self.stage_class.select_job_files()
         self.stage_class.execute()
 
@@ -238,7 +239,9 @@ class DataManager:
             config_file=cfg.redis_config_file,
             server_dir=cfg.redis_server_dir,
         )
-        job_name = f'{stage}_{cfg.shard_num}'
+        # Note this takes stage for reducer which might have different stages
+        # using the same class
+        job_name = self.stage_class.get_job_name(stage)
         if self.logger.check_is_job_running(job_name):
             return False
 
@@ -262,13 +265,22 @@ class WikiChunker(FileProcessor):
         )
 
         self.cfg = cfg
+        self.input_dir = cfg.wiki_processing.wiki_input_dir
+        self.merge_input_first = cfg.wiki_processing.wiki_input_dir_chunked
         self.chunked_dir = cfg.wiki_processing.wiki_chunked_dir
         self.target_words = cfg.wiki_processing.chunk_target_word_len
         self.max_words = cfg.wiki_processing.chunk_max_word_len
+        self.logger = None
 
         # Unused, but might be needed for word_tokenize and sent_tokenize to work
         self.tokenizer = load(f"tokenizers/punkt/english.pickle")
         self.detokenizer = su.get_detokenizer()
+
+    def set_logger(self, logger):
+        self.logger = logger
+
+    def get_job_name(self, stage):
+        return f'{stage}_{self.cfg.shard_num}'
 
     def select_job_files(self):
         # TODO: get files from config
@@ -286,9 +298,48 @@ class WikiChunker(FileProcessor):
     def load_file(self, file_path):
         return fu.load_file(file_path, ending='jsonl')
 
-    # Output list of pages within a fine, with lists of chunks for each page
-    def merge_results(self, file_output_list):
-        return flatten_list_of_lists(file_output_list)
+    # Output list of pages within a file, with lists of chunks for each page
+    def merge_results(self, file_path, file_output_list):
+        # Merge results
+        all_chunks = flatten_list_of_lists(file_output_list)
+
+        # Calculate metrics
+        if self.logger is not None:
+            md = Metrics()
+            md.increment_val('num_total_chunks', amount=len(all_chunks))
+            for page_chunks in file_output_list:
+                num_chunks = len(page_chunks)
+                if num_chunks == 0:
+                    md.increment_val('num_pages_without_text')
+                else:
+                    md.increment_val('num_pages_with_text')
+                    for chunk in page_chunks:
+                        num_chars = len(chunk['chunk_text'])
+                        num_toks = chunk['chunk_end_ind'] - chunk['chunk_start_ind']
+                        md.add_to_metric(
+                            'chars', 'chunk', num_chars, metric_type='hist',
+                        )
+                        md.add_to_metric(
+                            'toks', 'chunk', num_toks, metric_type='hist',
+                        )
+                    max_len_chunk_chars = max([len(c['chunk_text']) for c in page_chunks])
+                md.vals['max_num_chunks_per_page'] = max(
+                    md.vals['max_num_chunks_per_page'], num_chunks
+                )
+            md.vals['avg_num_chunks_per_page'] = (
+                1.0 * md.vals['num_total_chunks'] /
+                md.vals['num_pages_with_text']
+            )
+            md.update_agg_stats(no_len=True)
+
+            metrics_to_log = [('list_elem', 'file_path', file_path)]
+            metrics_to_log.extend([
+                ('list_elem', v_n, v_d) for v_n, v_d in md.vals.items()
+            ])
+            log_success = self.logger.log_all_to_redis(metrics_to_log, prefix="chunking")
+            if not log_success:
+                logging.info(f">> Redis logging failed for metrics: {metrics_to_log}")
+        return all_chunks
 
     # CPU intensive task: chunking
     def process_batch_elem(self, item):
@@ -439,7 +490,7 @@ class WikiMapper(FileProcessor):
         return mapped_chunk
 
     # This is where we combine any shared structures
-    def merge_results(self, file_output_list):
+    def merge_results(self, file_path, file_output_list):
         processed_chunks = file_output_list
 
         # Merge token data
