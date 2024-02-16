@@ -60,11 +60,16 @@ class DataManager:
 
     # Get the next incomplete stage & write the expected sbatch file
     def write_next_sbatch(self):
+        # Make sure the state file is initialized first
+        self.save_processing_state()
+
+        # Get next incomplete stage
         next_stage = self.get_next_processing_stage()
         if next_stage is None:
             logging.info(">> All stages completed already")
             return
 
+        # Write sbatch for that stage
         logging.info(f">> Next stage: {next_stage}")
         self._write_stage_sbatch(next_stage)
 
@@ -102,10 +107,8 @@ class DataManager:
                 'stage_num': stage_num,
                 'complete': False,
                 'expected_runs': None,
-                'written_runs': set(),
                 'verified_runs': set(),
             }
-        self.save_processing_state()
 
     # Only call in the sbatch creation flow
     def _validate_stage_complete(self, stage):
@@ -244,9 +247,9 @@ class DataManager:
         if job_finished:
             return False
 
-        # Otherwise, we're running!
-        self.logger.mark_job_running(job_name)
-        return True
+        # Otherwise, try to mark that we're running and return if we should start
+        tostart = self.logger.if_not_running_mark_return_tostart_flag(job_name)
+        return tostart
 
 
 class WikiChunker(FileProcessor):
