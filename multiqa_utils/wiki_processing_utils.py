@@ -372,7 +372,26 @@ class WikiChunker(FileProcessor):
         ]
         return chunks
 
-    def check_is_job_running(self, job_name):
+    def check_verified(self):
+        # TODO: check whether one of the flag files exist
+        # returns info
+        
+
+    def check_run_verified(self):
+        # TODO: call check_verified and if not verified then 
+        # rerun _verify_run
+        assert False
+
+
+    def _verify_run(self):
+        assert self.logger is not None
+        # TODO: this should be run while we have a redis logger
+        # calculate the verification metrics by comparing the expected
+        # files that should have been processed to the files that have
+        # been processed and calculating verification metrics on each
+        # using the Redis metrics and the output file
+        # Then write either job_name.incomplete, job_name.verified, or
+        # job_name.error as described in notion notes for WikiChunker
         assert False
 
     # Returns: [(chunk_start_ind, chunk_end_ind, chunk_text), ...]
