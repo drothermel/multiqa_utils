@@ -266,7 +266,6 @@ class WikiChunker(FileProcessor):
 
         self.cfg = cfg
         self.input_dir = cfg.wiki_processing.wiki_input_dir
-        self.merge_input_first = cfg.wiki_processing.wiki_input_dir_chunked
         self.chunked_dir = cfg.wiki_processing.wiki_chunked_dir
         self.target_words = cfg.wiki_processing.chunk_target_word_len
         self.max_words = cfg.wiki_processing.chunk_max_word_len
