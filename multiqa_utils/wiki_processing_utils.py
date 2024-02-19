@@ -11,7 +11,8 @@ import html
 
 from utils.redis_utils import RedisLogger
 from utils.parallel_utils import FileProcessor
-from utils.file_utils import fu
+import utils.file_utils as fu
+import utils.run_utils as ru
 import multiqa_utils.string_utils as su
 
 
@@ -109,6 +110,7 @@ class DataManager:
                 'complete': False,
                 'expected_runs': None,
                 'verified_runs': set(),
+                'run_error': False,
             }
 
     # Only call in the sbatch creation flow
@@ -129,10 +131,28 @@ class DataManager:
             self.save_processing_state()
             return True
 
-        # TODO: this is where we should run verification for the stage
-        # and update the state if verification is done.
+        job_status = self.stage_class.check_verified()
+        if job_status == 'error':
+            self.processing_state[stage]['job_error'] = True
+            self.save_processing_state()
+            logging.info(">> WARNING: this stage isn't complete, there was an error")
+            return True
 
-        # But otherwise the "complete = False" marker is correct
+        if job_status == 'verified':
+            self.processing_state[stage]['complete'] = True
+            self.processing_state[stage]['verified_runs'] = num_expected
+            self.save_processing_state()
+            return True
+
+        if job_status == 'incomplete':
+            flag_dir = self.stage_class.flag_dir
+            job_name = self.stage_class.get_job_name(stage)
+            job_data = fu.load_file(f'{flag_dir}{job_name}.incomplete.json')
+            num_missing = len(job_data['missing_files'])
+            num_verified = num_expected - num_missing
+            self.processing_state[stage]['verified_runs'] = num_verified
+            self.save_processing_state()
+            return False
         return False
 
     # The sbatch writing only chekcs the state file, not RedisLogger, and
@@ -245,9 +265,9 @@ class DataManager:
         if self.logger.check_is_job_running(job_name):
             return False
 
-        # If job isn't running, call verify on stage class
-        job_finished = self.stage_class.check_is_job_finished()
-        if job_finished:
+        # If job isn't running, call verify on stage class (may take a long time)
+        job_status = self.stage_class.check_run_verified()
+        if job_status in ['verified', 'error']:
             return False
 
         # Otherwise, try to mark that we're running and return if we should start
@@ -267,9 +287,13 @@ class WikiChunker(FileProcessor):
         self.cfg = cfg
         self.input_dir = cfg.wiki_processing.wiki_input_dir
         self.chunked_dir = cfg.wiki_processing.wiki_chunked_dir
+        self.flag_dir = f'{self.chunked_dir}run_flags/'
         self.target_words = cfg.wiki_processing.chunk_target_word_len
         self.max_words = cfg.wiki_processing.chunk_max_word_len
         self.logger = None
+        self.stage_name = 'chunking'
+        if not os.path.exists(self.flag_dir):
+            os.make_dirs(self.flag_dir)
 
         # Unused, but might be needed for word_tokenize and sent_tokenize to work
         self.tokenizer = load(f"tokenizers/punkt/english.pickle")
@@ -335,7 +359,7 @@ class WikiChunker(FileProcessor):
             metrics_to_log.extend([
                 ('list_elem', v_n, v_d) for v_n, v_d in md.vals.items()
             ])
-            log_success = self.logger.log_all_to_redis(metrics_to_log, prefix="chunking")
+            log_success = self.logger.log_all_to_redis(metrics_to_log, prefix=self.stage_name)
             if not log_success:
                 logging.info(f">> Redis logging failed for metrics: {metrics_to_log}")
         return all_chunks
@@ -372,26 +396,131 @@ class WikiChunker(FileProcessor):
         return chunks
 
     def check_verified(self):
-        # TODO: check whether one of the flag files exist
-        # returns info
-        
+        job_name = self.get_job_name(self.stage_name)
+        flag_path_base = f'{self.flag_dir}{job_name}'
+        if os.path.exists(f'{flag_path_base}.verified.json'):
+            return 'verified'
+        elif os.path.exists(f'{flag_path_base}.error.json'):
+            return 'error'
+        elif os.path.exists(f'{flag_path_base}.incomplete.json'):
+            return 'incomplete'
+        return None
 
     def check_run_verified(self):
-        # TODO: call check_verified and if not verified then 
-        # rerun _verify_run
-        assert False
-
+        run_status = self.check_verified()
+        if run_status is None:
+            run_status = self._verify_run()
+        return run_status
 
     def _verify_run(self):
         assert self.logger is not None
-        # TODO: this should be run while we have a redis logger
-        # calculate the verification metrics by comparing the expected
-        # files that should have been processed to the files that have
-        # been processed and calculating verification metrics on each
-        # using the Redis metrics and the output file
-        # Then write either job_name.incomplete, job_name.verified, or
-        # job_name.error as described in notion notes for WikiChunker
-        assert False
+        logging.info(">> Running _verify_run")
+
+        # Get relevant stats
+        files_set = set(self.files)
+        cmets = self.logger.get_kv_pairs_with_prefix(self.stage_name)
+        file_paths = cmets['file_path']
+        all_stats = {}
+        for i, fp in enumerate(file_paths):
+            if fp not in files_set:
+                continue
+            all_stats[fp] = {
+                'num_total_chunks': cmets['num_total_chunks'][i],
+                'chars_per_chunk_min': cmets['chars_per_chunk_min'][i],
+                'toks_per_chunk_min': cmets['toks_per_chunk_min'][i],
+            }
+
+        ## Calculate test results
+        test_res = {}
+        extra_data = {}
+
+        # Verify all files are in chunking metrics
+        failed_files = list(files_set - all_stats.keys())
+        tname = 'all_files_in_metrics'
+        test_res[tname] = (len(failed_files) == 0)
+        if not test_res[tname]:
+            extra_data[tname] = failed_files
+
+        # Verify no chunks have fewer than one char or tok
+        tname = 'has_chars'
+        failed_files = []
+        for fp, fd in all_stats.items():
+            if fd['chars_per_chunk_min'] == 0:
+                failed_files.append((fp, fd['chars_per_chunk_min']))
+        test_res[tname] = (len(failed_files) == 0)
+        if not test_res[tname]:
+            extra_data[tname] = failed_files
+
+        tname = 'has_toks'
+        failed_files = []
+        for fp, fd in all_stats.items():
+            if fd['toks_per_chunk_min'] == 0:
+                failed_files.append((fp, fd['toks_per_chunk_min']))
+        test_res[tname] = (len(failed_files) == 0)
+        if not test_res[tname]:
+            extra_data[tname] = failed_files
+
+        # Verify that the output file exists
+        tname = 'out_file_exists'
+        failed_files = []
+        for fp, fd in all_stats.items():
+            out_fp = self.get_output_from_inpath(fp)
+            if not os.path.exists(out_fp):
+                failed_files.append((fp, out_fp))
+        test_res[tname] = (len(failed_files) == 0)
+        if not test_res[tname]:
+            extra_data[tname] = failed_files
+
+        # Verify file content
+        num_unique_chunks = {}
+        num_chunks = {}
+        for fp, fd in all_stats.items():
+            out_fp = self.get_output_from_inpath(fp)
+            if not os.path.exists(out_fp):
+                continue
+            out_data = fu.load_file(out_fp)
+            cids = []
+            for cdata in out_data:
+                cids.append((cdata['page_id'], cdata['chunk_num']))
+            num_chunks[fp] = len(cids)
+            num_unique_chunks[fp] = len(set(cids))
+
+        tname = 'all_cids_unique'
+        failed_files = []
+        for fp, nc in num_chunks.items():
+            nuc = num_unique_chunks[fp]
+            if nc != nuc:
+                failed_files.append((fp, nc, nuc))
+        test_res[tname] = (len(failed_files) == 0)
+        if not test_res[tname]:
+            extra_data[tname] = failed_files
+
+        tname = 'expected_num_chunks'
+        failed_files = []
+        for fp, nuc in num_unique_chunks.items():
+            expected_c = all_stats[fp]['num_total_chunks']
+            if nuc != expected_c:
+                failed_files.append((fp, nuc, expected_c))
+        test_res[tname] = (len(failed_files) == 0)
+        if not test_res[tname]:
+            extra_data[tname] = failed_files
+
+
+        ## Convert test results into flag
+        dump_data = ['']
+        test_results = 'verified'
+        if not test_res['all_files_in_metrics']:
+            test_results = 'incomplete'
+            dump_data = {'missing_files': extra_data['all_files_in_metrics']}
+        elif not all(list(test_res.keys())):
+            test_results = 'error'
+            dump_data = extra_data
+
+        ## Dump results
+        job_name = self.get_job_name(self.stage_name)
+        flag_path = f'{self.flag_dir}{job_name}.{test_results}.json'
+        fu.dump_file(dump_data, flag_path, verbose=True)
+        return test_results
 
     # Returns: [(chunk_start_ind, chunk_end_ind, chunk_text), ...]
     def _combine_sentences_into_chunks(self, sentences):
