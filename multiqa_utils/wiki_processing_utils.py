@@ -341,26 +341,35 @@ class WikiChunker(FileProcessor):
                         num_chars = len(chunk['chunk_text'])
                         num_toks = chunk['chunk_end_ind'] - chunk['chunk_start_ind']
                         md.add_to_metric(
-                            'chars', 'chunk', num_chars, metric_type='hist',
+                            'chars',
+                            'chunk',
+                            num_chars,
+                            metric_type='hist',
                         )
                         md.add_to_metric(
-                            'toks', 'chunk', num_toks, metric_type='hist',
+                            'toks',
+                            'chunk',
+                            num_toks,
+                            metric_type='hist',
                         )
-                    max_len_chunk_chars = max([len(c['chunk_text']) for c in page_chunks])
+                    max_len_chunk_chars = max(
+                        [len(c['chunk_text']) for c in page_chunks]
+                    )
                 md.vals['max_num_chunks_per_page'] = max(
                     md.vals['max_num_chunks_per_page'], num_chunks
                 )
             md.vals['avg_num_chunks_per_page'] = (
-                1.0 * md.vals['num_total_chunks'] /
-                md.vals['num_pages_with_text']
+                1.0 * md.vals['num_total_chunks'] / md.vals['num_pages_with_text']
             )
             md.update_agg_stats(no_len=True)
 
             metrics_to_log = [('list_elem', 'file_path', file_path)]
-            metrics_to_log.extend([
-                ('list_elem', v_n, v_d) for v_n, v_d in md.vals.items()
-            ])
-            log_success = self.logger.log_all_to_redis(metrics_to_log, prefix=self.stage_name)
+            metrics_to_log.extend(
+                [('list_elem', v_n, v_d) for v_n, v_d in md.vals.items()]
+            )
+            log_success = self.logger.log_all_to_redis(
+                metrics_to_log, prefix=self.stage_name
+            )
             if not log_success:
                 logging.info(f">> Redis logging failed for metrics: {metrics_to_log}")
         return all_chunks
@@ -438,7 +447,7 @@ class WikiChunker(FileProcessor):
         # Verify all files are in chunking metrics
         failed_files = list(files_set - all_stats.keys())
         tname = 'all_files_in_metrics'
-        test_res[tname] = (len(failed_files) == 0)
+        test_res[tname] = len(failed_files) == 0
         if not test_res[tname]:
             extra_data[tname] = failed_files
 
@@ -448,7 +457,7 @@ class WikiChunker(FileProcessor):
         for fp, fd in all_stats.items():
             if fd['chars_per_chunk_min'] == 0:
                 failed_files.append((fp, fd['chars_per_chunk_min']))
-        test_res[tname] = (len(failed_files) == 0)
+        test_res[tname] = len(failed_files) == 0
         if not test_res[tname]:
             extra_data[tname] = failed_files
 
@@ -457,7 +466,7 @@ class WikiChunker(FileProcessor):
         for fp, fd in all_stats.items():
             if fd['toks_per_chunk_min'] == 0:
                 failed_files.append((fp, fd['toks_per_chunk_min']))
-        test_res[tname] = (len(failed_files) == 0)
+        test_res[tname] = len(failed_files) == 0
         if not test_res[tname]:
             extra_data[tname] = failed_files
 
@@ -468,7 +477,7 @@ class WikiChunker(FileProcessor):
             out_fp = self.get_output_from_inpath(fp)
             if not os.path.exists(out_fp):
                 failed_files.append((fp, out_fp))
-        test_res[tname] = (len(failed_files) == 0)
+        test_res[tname] = len(failed_files) == 0
         if not test_res[tname]:
             extra_data[tname] = failed_files
 
@@ -492,7 +501,7 @@ class WikiChunker(FileProcessor):
             nuc = num_unique_chunks[fp]
             if nc != nuc:
                 failed_files.append((fp, nc, nuc))
-        test_res[tname] = (len(failed_files) == 0)
+        test_res[tname] = len(failed_files) == 0
         if not test_res[tname]:
             extra_data[tname] = failed_files
 
@@ -502,10 +511,9 @@ class WikiChunker(FileProcessor):
             expected_c = all_stats[fp]['num_total_chunks']
             if nuc != expected_c:
                 failed_files.append((fp, nuc, expected_c))
-        test_res[tname] = (len(failed_files) == 0)
+        test_res[tname] = len(failed_files) == 0
         if not test_res[tname]:
             extra_data[tname] = failed_files
-
 
         ## Convert test results into flag
         dump_data = ['']
