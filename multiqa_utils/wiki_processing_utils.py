@@ -303,12 +303,13 @@ class WikiChunker(FileProcessor):
         self.logger = logger
 
     def get_job_name(self, stage):
-        return f'{stage}_{self.cfg.shard_num}'
+        return f'{stage}_{self.cfg.shard_ind}'
 
     def select_job_files(self):
-        # TODO: get files from config
-        self.files = []
-        assert False
+        glob_all = fu.get_recursive_files(self.input_dir)
+        all_files = [f for f in all_files if '/wiki_' in f]
+        shard_files = ru.get_curr_shard(all_files, cfg.shard_num, cfg.shard_ind)
+        self.files = shard_files
 
     def get_output_from_inpath(self, file_path):
         # basepath/AA/wiki_00
