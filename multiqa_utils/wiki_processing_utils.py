@@ -72,9 +72,6 @@ class DataManager:
 
     # Get the next incomplete stage & write the expected sbatch file
     def write_next_sbatch(self):
-        # Make sure the state file is initialized first
-        self.save_processing_state()
-
         # Get next incomplete stage
         next_stage_name = self.get_next_processing_stage_name()
         if next_stage_name is None:
@@ -86,6 +83,10 @@ class DataManager:
         self._write_stage_sbatch(next_stage_name)
 
     def run_stage(self, stage_name):
+        if stage_name == 'sbatch':
+            self.write_next_sbatch()
+            return
+
         self.set_stage_class_from_stage_name(stage_name)
         job_starting = self._verify_job_start(stage_name)
         if not job_starting:
@@ -96,6 +97,9 @@ class DataManager:
         self.stage_class.set_logger(self.logger)
         self.stage_class.select_job_files()
         self.stage_class.execute()
+        run_status = self.stage_class.verify_run()
+        shard_ind = self.cfg.shard_ind
+        logging.info(f">> Completed {stage_name} shard {shard_ind} with status: {run_status}")
 
     def _load_or_create_processing_state(self):
         if os.path.exists(self.cfg.wiki_processing.state_path):
@@ -143,7 +147,7 @@ class DataManager:
         self.set_stage_class_from_stage_name(stage_name)
         job_status = self.stage_class.check_verified()
         if job_status == 'error':
-            self.processing_state[stage_name]['job_error'] = True
+            self.processing_state[stage_name]['run_error'] = True
             self.save_processing_state()
             logging.info(">> WARNING: this stage isn't complete, there was an error")
             self.stage_class = None
@@ -268,7 +272,7 @@ class WikiStage(FileProcessor):
     def set_logger(self, logger):
         self.logger = logger
 
-    def get_job_name(self)
+    def get_job_name(self):
         return f'{self.stage_name}_{self.cfg.shard_ind}'
 
     def check_verified(self):
@@ -285,7 +289,7 @@ class WikiStage(FileProcessor):
     def check_run_verified(self):
         run_status = self.check_verified()
         if run_status is None:
-            run_status = self._verify_run()
+            run_status = self.verify_run()
         return run_status
 
     def _get_test_results_dump_flag_file(self, test_res, extra_data):
@@ -339,9 +343,9 @@ class WikiStage(FileProcessor):
     def select_job_files(self):
         self.files = None
 
-    def _verify_run(self):
+    def verify_run(self):
         assert self.logger is not None
-        test_results = None
+        ttest_results = None
         assert test_results in ['verified', 'incomplete', 'error']
         return test_results
 
@@ -460,9 +464,9 @@ class WikiChunker(WikiStage):
         ]
         return chunks
 
-    def _verify_run(self):
+    def verify_run(self):
         assert self.logger is not None
-        logging.info(">> Running _verify_run")
+        logging.info(">> Running verify_run")
 
         # Get relevant stats
         files_set = set(self.files)
@@ -663,10 +667,10 @@ class WikiLinker(WikiStage):
         # Linking dumps the results per-file and returns nothing
         # Entity set needs to aggregate the results
         if self.stage_name == 'entity_set':
-            self._entity_set_results_to_trie_and_dump(self, results)
+            self._entity_set_results_to_trie_and_dump(results)
         return None
 
-    def _verify_run(self):
+    def verify_run(self):
         if self.stage_name == 'entity_set':
             return self._verify_entity_set_run()
 
