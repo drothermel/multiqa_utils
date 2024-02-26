@@ -288,6 +288,7 @@ class WikiStage(FileProcessor):
         self.stage_name = stage_name
         self.flag_dir = None
         self.logger = None
+        self.file_metric_key = 'all_files_in_metrics'
         
 
     def set_logger(self, logger):
@@ -314,6 +315,47 @@ class WikiStage(FileProcessor):
             run_status = self._verify_run()
         return run_status
 
+    # Expects: 'all_files_in_metrics'
+    def _get_test_results_dump_flag_file(self, test_res, extra_data):
+        if self.file_metric_key not in test_res:
+            test_res[self.file_metric_key] = False
+            extra_data[self.file_metric_key] = f'Expected key missing: {self.file_metric_key}'
+
+        ## Convert test results into flag
+        dump_data = ['']
+        test_results = 'verified'
+        if not test_res[self.file_metric_key]:
+            test_results = 'incomplete'
+            dump_data = {'missing_files': extra_data[self.file_metric_key]}
+        if not all(list(test_res.keys())):
+            test_results = 'error'
+            dump_data = extra_data
+
+        ## Dump results
+        job_name = self.get_job_name(self.stage_name)
+        flag_path = f'{self.flag_dir}{job_name}.{test_results}.json'
+        fu.dump_file(dump_data, flag_path, verbose=True)
+        return test_results
+
+
+    def _check_expected_vs_file_path_redis(self):
+        expected_files = set(self.files)
+        logged_files = set(self.logger.read_from_redis(
+            data_type='list',
+            name=f'{self.stage_name}.file_path',
+        ))
+        failed_files = list(expected_files - logged_files)
+        return failed_files
+
+    def _standard_update_test_res_extra_data(
+        self, tname, test_res, extra_data, failed_files,
+    ):
+        test_res[tname] = len(failed_files) == 0
+        if not test_res[tname]:
+            extra_data[tname] = failed_files
+        
+
+
     # ---- Override these ---- #
     # execute() and other FileProcessor fxns too
 
@@ -327,12 +369,6 @@ class WikiStage(FileProcessor):
         return test_results
 
     # ------------------------ #
-
-
-        
-
-
-    
 
 
 class WikiChunker(WikiStage):
@@ -473,41 +509,37 @@ class WikiChunker(WikiStage):
         extra_data = {}
 
         # Verify all files are in chunking metrics
-        tname = 'all_files_in_metrics'
         failed_files = list(files_set - all_stats.keys())
-        test_res[tname] = len(failed_files) == 0
-        if not test_res[tname]:
-            extra_data[tname] = failed_files
+        self._standard_update_test_res_extra_data(
+            self.file_metric_key, test_res, extra_data, failed_files,
+        )
 
         # Verify no chunks have fewer than one char or tok
-        tname = 'has_chars'
         failed_files = []
         for fp, fd in all_stats.items():
             if fd['chars_per_chunk_min'] == 0:
                 failed_files.append((fp, fd['chars_per_chunk_min']))
-        test_res[tname] = len(failed_files) == 0
-        if not test_res[tname]:
-            extra_data[tname] = failed_files
+        self._standard_update_test_res_extra_data(
+            'has_chars', test_res, extra_data, failed_files,
+        )
 
-        tname = 'has_toks'
         failed_files = []
         for fp, fd in all_stats.items():
             if fd['toks_per_chunk_min'] == 0:
                 failed_files.append((fp, fd['toks_per_chunk_min']))
-        test_res[tname] = len(failed_files) == 0
-        if not test_res[tname]:
-            extra_data[tname] = failed_files
+        self._standard_update_test_res_extra_data(
+            'has_toks', test_res, extra_data, failed_files,
+        )
 
         # Verify that the output file exists
-        tname = 'out_file_exists'
         failed_files = []
         for fp, fd in all_stats.items():
             out_fp = self.get_output_from_inpath(fp)
             if not os.path.exists(out_fp):
                 failed_files.append((fp, out_fp))
-        test_res[tname] = len(failed_files) == 0
-        if not test_res[tname]:
-            extra_data[tname] = failed_files
+        self._standard_update_test_res_extra_data(
+            'out_file_exists', test_res, extra_data, failed_files,
+        )
 
         # Verify file content
         num_unique_chunks = {}
@@ -523,41 +555,25 @@ class WikiChunker(WikiStage):
             num_chunks[fp] = len(cids)
             num_unique_chunks[fp] = len(set(cids))
 
-        tname = 'all_cids_unique'
         failed_files = []
         for fp, nc in num_chunks.items():
             nuc = num_unique_chunks[fp]
             if nc != nuc:
                 failed_files.append((fp, nc, nuc))
-        test_res[tname] = len(failed_files) == 0
-        if not test_res[tname]:
-            extra_data[tname] = failed_files
+        self._standard_update_test_res_extra_data(
+            'all_cids_unique', test_res, extra_data, failed_files,
+        )
 
-        tname = 'expected_num_chunks'
         failed_files = []
         for fp, nuc in num_unique_chunks.items():
             expected_c = all_stats[fp]['num_total_chunks']
             if nuc != expected_c:
                 failed_files.append((fp, nuc, expected_c))
-        test_res[tname] = len(failed_files) == 0
-        if not test_res[tname]:
-            extra_data[tname] = failed_files
+        self._standard_update_test_res_extra_data(
+            'expected_num_chunks', test_res, extra_data, failed_files,
+        )
+        return self._get_test_results_dump_flag_file(test_res, extra_data)
 
-        ## Convert test results into flag
-        dump_data = ['']
-        test_results = 'verified'
-        if not test_res['all_files_in_metrics']:
-            test_results = 'incomplete'
-            dump_data = {'missing_files': extra_data['all_files_in_metrics']}
-        elif not all(list(test_res.keys())):
-            test_results = 'error'
-            dump_data = extra_data
-
-        ## Dump results
-        job_name = self.get_job_name(self.stage_name)
-        flag_path = f'{self.flag_dir}{job_name}.{test_results}.json'
-        fu.dump_file(dump_data, flag_path, verbose=True)
-        return test_results
 
     # Returns: [(chunk_start_ind, chunk_end_ind, chunk_text), ...]
     def _combine_sentences_into_chunks(self, sentences):
@@ -609,6 +625,11 @@ class WikiLinker(WikiStage):
         if not os.path.exists(self.flag_dir):
             os.make_dirs(self.flag_dir)
 
+        # Only used for linking
+        # - for genre linking
+        self.genre_model = None
+        self.genre_cand_trie = None
+
     def select_job_files(self):
         # For either job type, get all the chunked files
         glob_all = fu.get_recursive_files(self.chunked_dir)
@@ -632,6 +653,19 @@ class WikiLinker(WikiStage):
 
     def execute(self):
         assert self.logger is not None
+        # Linking needs to load some additional data
+        if self.stage_name == 'linking':
+            if self.link_type == 'genre':
+                logging.info(">>  Loading genre model")
+                self.genre_model = gu.load_genre_model(
+                    self.cfg.wiki_processing.linking.genre_model_path,
+                    self.cfg.wiki_processing.linking.genre_batch_size,
+                )
+                logging.info(">>  Loading genre candidate trie")
+                self.genre_cand_trie = fu.load_file(
+                    self.cfg.wiki_processing.linking.genre_cand_trie_path
+                )
+
         # Both versions need to run process file in threads
         all_results = super().execute()
 
@@ -689,16 +723,10 @@ class WikiLinker(WikiStage):
         extra_data = {}
 
         ## The tests
-        tname = 'all_files_in_metrics'
-        expected_files = set(self.files)
-        logged_files = set(self.logger.read_from_redis(
-            data_type='list',
-            name=f'{self.stage_name}.file_path',
-        ))
-        failed_files = list(expected_files - logged_files)
-        test_res[tname] = len(failed_files) == 0
-        if not test_res[tname]:
-            extra_data[tname] = failed_files
+        failed_files = self._check_expected_vs_file_path_redis()
+        self._standard_update_test_res_extra_data(
+            self.file_metric_key, test_res, extra_data, failed_files,
+        )
 
         tname = 'cand_trie_exists'
         failed_files = []
@@ -728,22 +756,7 @@ class WikiLinker(WikiStage):
                 }
         test_res[tname] = len(failed_files) == 0
 
-        ## Convert test results into flag
-        dump_data = ['']
-        test_results = 'verified'
-        if not test_res['all_files_in_metrics']:
-            test_results = 'incomplete'
-            dump_data = {'missing_files': extra_data['all_files_in_metrics']}
-        if not all(list(test_res.keys())):
-            test_results = 'error'
-            dump_data = extra_data
-
-        ## Dump results
-        job_name = self.get_job_name(self.stage_name)
-        flag_path = f'{self.flag_dir}{job_name}.{test_results}.json'
-        fu.dump_file(dump_data, flag_path, verbose=True)
-        return test_results
-
+        return self._get_test_results_dump_flag_file(test_res, extra_data)
 
     def _get_outpath_from_inpath_linking(self, file_path):
         init_name = fu.get_file_from_path(init_filepath)
@@ -754,17 +767,48 @@ class WikiLinker(WikiStage):
         outpath = self._get_outpath_from_inpath_linking(file_path)
         if skip_exists and os.path.exists(outpath):
             return
-        data = self.load_file(file_path)
 
         results = []
-        # TODO: use gpu to process file and fill results
-        # No metrics to log
+        if self.link_type == 'genre':
+            assert self.genre_model is not None
+            assert self.genre_cand_trie is not None
+            input_data = gu.load_and_prepare_wiki_data(file_path)
+            results = gu.batched_predict(
+                input_data,
+                self.genre_model,
+                cand_trie,
+            )
+        else:
+            assert False, f">> ERROR: Unknown link type: {self.link_type}"
+        self.logger.log_one_to_redis(
+            data_type='list_elem',
+            name='file_path',
+            data=file_path,
+            prefix=self.stage_name,
+        )
         fu.dump_file(results, outpath)
         return None
 
     def _verify_linking_run(self):
-        # TODO
+        assert self.logger is not None
+        test_res = {}
+        extra_data = {}
 
+        ## The tests
+        failed_files = self._check_expected_vs_file_path_redis()
+        self._standard_update_test_res_extra_data(
+            self.file_metric_key, test_res, extra_data, failed_files,
+        )
+
+        failed_files = []
+        for fn in logged_files:
+            logged_data = fu.load_file(fn)
+            if any([len(pr) == 0 for pr in logged_data]):
+                failed_files.append(fn)
+        self._standard_update_test_res_extra_data(
+            'all_chunks_have_preds', test_res, extra_data, failed_files,
+        )
+        return self._get_test_results_dump_flag_file(test_res, extra_data)
 
 
 class WikiMapper(FileProcessor):
