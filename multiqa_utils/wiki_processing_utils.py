@@ -13,6 +13,7 @@ from utils.redis_utils import RedisLogger
 from utils.parallel_utils import FileProcessor
 import utils.file_utils as fu
 import utils.run_utils as ru
+import multiqa_utils.genre_utils as gu
 import multiqa_utils.string_utils as su
 
 
