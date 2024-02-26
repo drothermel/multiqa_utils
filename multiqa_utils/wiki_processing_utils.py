@@ -339,24 +339,17 @@ class WikiChunker(WikiStage):
     def __init__(self, cfg, stage_name):
         super().__init__(cfg, stage_name)
         self.input_dir = cfg.wiki_processing.wiki_input_dir
-        self.chunked_dir = cfg.wiki_processing.wiki_chunked_dir
+        self.chunked_dir = cfg.wiki_processing.chunked_dir
         self.flag_dir = f'{self.chunked_dir}run_flags/'
-        self.target_words = cfg.wiki_processing.chunk_target_word_len
-        self.max_words = cfg.wiki_processing.chunk_max_word_len
-        self.logger = None
-        self.stage_name = 'chunking'
         if not os.path.exists(self.flag_dir):
             os.make_dirs(self.flag_dir)
+
+        self.target_words = cfg.wiki_processing.chunk_target_word_len
+        self.max_words = cfg.wiki_processing.chunk_max_word_len
 
         # Unused, but might be needed for word_tokenize and sent_tokenize to work
         self.tokenizer = load(f"tokenizers/punkt/english.pickle")
         self.detokenizer = su.get_detokenizer()
-
-    def set_logger(self, logger):
-        self.logger = logger
-
-    def get_job_name(self, stage):
-        return f'{stage}_{self.cfg.shard_ind}'
 
     def select_job_files(self):
         glob_all = fu.get_recursive_files(self.input_dir)
@@ -457,23 +450,6 @@ class WikiChunker(WikiStage):
             for c_i, (c_start, c_end, c_text) in enumerate(raw_chunks)
         ]
         return chunks
-
-    def check_verified(self):
-        job_name = self.get_job_name(self.stage_name)
-        flag_path_base = f'{self.flag_dir}{job_name}'
-        if os.path.exists(f'{flag_path_base}.verified.json'):
-            return 'verified'
-        elif os.path.exists(f'{flag_path_base}.error.json'):
-            return 'error'
-        elif os.path.exists(f'{flag_path_base}.incomplete.json'):
-            return 'incomplete'
-        return None
-
-    def check_run_verified(self):
-        run_status = self.check_verified()
-        if run_status is None:
-            run_status = self._verify_run()
-        return run_status
 
     def _verify_run(self):
         assert self.logger is not None
@@ -624,13 +600,180 @@ class WikiChunker(WikiStage):
 
         return chunks
 
+class WikiLinker(WikiStage):
+    def __init__(self, cfg, stage_name):
+        super().__init__(cfg, stage_name)
+        self.chunked_dir = cfg.wiki_processing.chunked_dir
+        self.link_type = cfg.wiki_processing.linking.link_type
+        self.linked_dir = cfg.wiki_processing.linked_dirs[self.link_type]
+        self.flag_dir = f'{self.linked_dir}run_flags/'
+        if not os.path.exists(self.flag_dir):
+            os.make_dirs(self.flag_dir)
+
+    def select_job_files(self):
+        # For either job type, get all the chunked files
+        glob_all = fu.get_recursive_files(self.chunked_dir)
+        all_files = [f for f in all_files if '/wiki_' in f]
+        if self.stage_name == 'entity_set':
+            # One job for all files
+            self.files = all_files
+        
+        if self.stage_name == 'linking':
+            # Sharded jobs
+            shard_files = ru.get_curr_shard(all_files, cfg.shard_num, cfg.shard_ind)
+            self.files = shard_files
+
+
+    def process_file(self, file_path):
+        if self.stage_name == 'entity_set':
+            return self._process_file_entity_set(file_path)
+        
+        if self.stage_name == 'linking':
+            return self._process_file_linking(file_path)
+
+    def execute(self):
+        assert self.logger is not None
+        # Both versions need to run process file in threads
+        all_results = super().execute()
+
+        # Linking dumps the results per-file and returns nothing
+        # Entity set needs to aggregate the results
+        if self.stage_name == 'entity_set':
+            self._entity_set_results_to_trie_and_dump(self, results)
+        return None
+            
+
+    def _verify_run(self):
+        if self.stage_name == 'entity_set':
+            return self._verify_entity_set_run()
+
+        if self.stage_name == 'linking':
+            return self._verify_linking_run()
+
+    def _process_file_entity_set(self, file_path):
+        data = self.load_file(file_path)
+        all_titles = [c['title'] for c in data]
+        # Log metric: file_path
+        self.logger.log_one_to_redis(
+            data_type='list_elem',
+            name='file_path',
+            data=file_path,
+            prefix=self.stage_name,
+        )
+        return all_titles
+
+    def _entity_set_results_to_trie_and_dump(self, results):
+        # Aggregate all ents across files
+        all_ents = set()
+        for file_ents in results:
+            all_ents.update(file_ents)
+
+        # Log metric: num_ents
+        self.logger.log_one_to_redis(
+            data_type='key_val',
+            name='num_ents',
+            data=len(all_ents),
+            prefix=self.stage_name,
+        )
+
+        # Make and dump trie, model needed for tokenization
+        genre_model = gu.load_genre_model(
+            self.cfg.wiki_processing.linking.genre_model_path,
+            self.cfg.wiki_processing.linking.genre_batch_size,
+        )
+        cand_trie_outpath = self.cfg.wiki_processing.linking.genre_cand_trie_path
+        _ = gu.build_dump_return_cand_trie(all_ents, genre_model, cand_trie_outpath)
+
+    def _verify_entity_set_run(self):
+        assert self.logger is not None
+        test_res = {}
+        extra_data = {}
+
+        ## The tests
+        tname = 'all_files_in_metrics'
+        expected_files = set(self.files)
+        logged_files = set(self.logger.read_from_redis(
+            data_type='list',
+            name=f'{self.stage_name}.file_path',
+        ))
+        failed_files = list(expected_files - logged_files)
+        test_res[tname] = len(failed_files) == 0
+        if not test_res[tname]:
+            extra_data[tname] = failed_files
+
+        tname = 'cand_trie_exists'
+        failed_files = []
+        cand_trie_path = self.cfg.wiki_processing.linking.genre_cand_trie_path
+        if not os.path.exists(cand_trie_path):
+            failed_files.append(cand_trie_path)
+        test_res[tname] = len(failed_files) == 0
+        if not test_res[tname]:
+            extra_data[tname] = {'missing_trie_file': cand_trie_path}
+
+        tname = 'trie_size_match_logged_num_ents'
+        failed_files = []
+        if not os.path.exists(cand_trie_path):
+            failed_files.append(cand_trie_path)
+            extra_data[tname] = {'error': "size can't match if trie doesn't exist"}
+        else:
+            logged_num_ents = self.logger.read_from_redis(
+                data_type='key_val',
+                name=f'{self.stage_name}.num_ents',
+            )
+            cand_trie = fu.load_file(cand_trie_path)
+            if len(cand_trie) != logged_num_ents:
+                failed_files.append(cand_trie_path)
+                extra_data[tname] = {
+                    'logged_num_ents': logged_num_ents,
+                    'cand_trie_len': len(cand_trie),
+                }
+        test_res[tname] = len(failed_files) == 0
+
+        ## Convert test results into flag
+        dump_data = ['']
+        test_results = 'verified'
+        if not test_res['all_files_in_metrics']:
+            test_results = 'incomplete'
+            dump_data = {'missing_files': extra_data['all_files_in_metrics']}
+        if not all(list(test_res.keys())):
+            test_results = 'error'
+            dump_data = extra_data
+
+        ## Dump results
+        job_name = self.get_job_name(self.stage_name)
+        flag_path = f'{self.flag_dir}{job_name}.{test_results}.json'
+        fu.dump_file(dump_data, flag_path, verbose=True)
+        return test_results
+
+
+    def _get_outpath_from_inpath_linking(self, file_path):
+        init_name = fu.get_file_from_path(init_filepath)
+        return os.path.join(self.linked_dir, f'{init_name}.pkl')
+
+    def _process_file_linking(self, file_path):
+        # Check if already done, load data
+        outpath = self._get_outpath_from_inpath_linking(file_path)
+        if skip_exists and os.path.exists(outpath):
+            return
+        data = self.load_file(file_path)
+
+        results = []
+        # TODO: use gpu to process file and fill results
+        # No metrics to log
+        fu.dump_file(results, outpath)
+        return None
+
+    def _verify_linking_run(self):
+        # TODO
+
+
 
 class WikiMapper(FileProcessor):
     def __init__(self, cfg):
         self.cfg = cfg
         self.graph_type = cfg.wiki_processing.graph_type
-        self.chunked_dir = cfg.wiki_processing.wiki_chunked_dir
-        self.mapped_dir = cfg.wiki_processing.wiki_mapped_dir[self.graph_type]
+        self.chunked_dir = cfg.wiki_processing.chunked_dir
+        self.mapped_dir = cfg.wiki_processing.mapped_dir[self.graph_type]
         self.tokenizer = tu.initialize_tokenizer(
             cfg.tokenizer_config_path,  # TODO: This doesn't work yet
         )
@@ -823,7 +966,7 @@ class WikiMapper(FileProcessor):
 
 
 def get_mapped_file(cfg, input_name):
-    mapped_dir = cfg.wiki_processing.wiki_mapped_dir
+    mapped_dir = cfg.wiki_processing.mapped_dir
     return f"{mapped_dir}{input_name}_parsed.pkl"
 
 
