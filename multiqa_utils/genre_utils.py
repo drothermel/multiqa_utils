@@ -13,18 +13,12 @@ from genre.utils import (
 )
 from genre.trie import Trie
 
-
-def load_genre_model_and_data(
-    genre_model_path, cand_trie_path, batch_size_toks=2048 * 7
-):
+def load_genre_model(genre_model_path, batch_size_toks=2048 * 7):
     genre_model = GENRE.from_pretrained(genre_model_path).eval()
     genre_model = genre_model.cuda()
     logging.info(">> Model loaded")
     genre_model.cfg.dataset.max_tokens = batch_size_toks
-    cand_trie = build_cand_trie(cand_trie_path)
-    logging.info(">> Trie loaded")
-    return genre_model, cand_trie
-
+    return genre_model
 
 # Assumes a list of dicts each containing a "title" and "content" key
 def load_and_prepare_wiki_data(file_path):
@@ -85,6 +79,19 @@ def process_preds_batch(input_data, preds):
         for es in ao['ents']:
             all_out[i]['all_ents'].update(es)
     return all_out
+
+
+def build_dump_return_cand_trie(entities, genre_model, outpath):
+    # Rebuilding takes 20m, loading takes 20s, 20G mem
+    if os.path.exists(outpath):
+        return fu.load_file(outpath)
+
+    cand_trie = Trie(
+        [genre_model.encode(" }} [ {} ]".format(e))[1:].tolist() for e in entities]
+    )
+    fu.dumppkl(cand_trie, path)
+    return cand_trie
+
 
 
 # This should be done before running any scripts
