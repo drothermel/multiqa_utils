@@ -374,50 +374,49 @@ class WikiChunker(WikiStage):
         all_chunks = flatten_list_of_lists(file_output_list)
 
         # Calculate metrics
-        if self.logger is not None:
-            md = Metrics()
-            md.increment_val('num_total_chunks', amount=len(all_chunks))
-            for page_chunks in file_output_list:
-                num_chunks = len(page_chunks)
-                if num_chunks == 0:
-                    md.increment_val('num_pages_without_text')
-                else:
-                    md.increment_val('num_pages_with_text')
-                    for chunk in page_chunks:
-                        num_chars = len(chunk['chunk_text'])
-                        num_toks = chunk['chunk_end_ind'] - chunk['chunk_start_ind']
-                        md.add_to_metric(
-                            'chars',
-                            'chunk',
-                            num_chars,
-                            metric_type='hist',
-                        )
-                        md.add_to_metric(
-                            'toks',
-                            'chunk',
-                            num_toks,
-                            metric_type='hist',
-                        )
-                    max_len_chunk_chars = max(
-                        [len(c['chunk_text']) for c in page_chunks]
+        md = Metrics()
+        md.increment_val('num_total_chunks', amount=len(all_chunks))
+        for page_chunks in file_output_list:
+            num_chunks = len(page_chunks)
+            if num_chunks == 0:
+                md.increment_val('num_pages_without_text')
+            else:
+                md.increment_val('num_pages_with_text')
+                for chunk in page_chunks:
+                    num_chars = len(chunk['chunk_text'])
+                    num_toks = chunk['chunk_end_ind'] - chunk['chunk_start_ind']
+                    md.add_to_metric(
+                        'chars',
+                        'chunk',
+                        num_chars,
+                        metric_type='hist',
                     )
-                md.vals['max_num_chunks_per_page'] = max(
-                    md.vals['max_num_chunks_per_page'], num_chunks
+                    md.add_to_metric(
+                        'toks',
+                        'chunk',
+                        num_toks,
+                        metric_type='hist',
+                    )
+                max_len_chunk_chars = max(
+                    [len(c['chunk_text']) for c in page_chunks]
                 )
-            md.vals['avg_num_chunks_per_page'] = (
-                1.0 * md.vals['num_total_chunks'] / md.vals['num_pages_with_text']
+            md.vals['max_num_chunks_per_page'] = max(
+                md.vals['max_num_chunks_per_page'], num_chunks
             )
-            md.update_agg_stats(no_len=True)
+        md.vals['avg_num_chunks_per_page'] = (
+            1.0 * md.vals['num_total_chunks'] / md.vals['num_pages_with_text']
+        )
+        md.update_agg_stats(no_len=True)
 
-            metrics_to_log = [('list_elem', 'file_path', file_path)]
-            metrics_to_log.extend(
-                [('list_elem', v_n, v_d) for v_n, v_d in md.vals.items()]
-            )
-            log_success = self.logger.log_all_to_redis(
-                metrics_to_log, prefix=self.stage_name
-            )
-            if not log_success:
-                logging.info(f">> Redis logging failed for metrics: {metrics_to_log}")
+        metrics_to_log = [('list_elem', 'file_path', file_path)]
+        metrics_to_log.extend(
+            [('list_elem', v_n, v_d) for v_n, v_d in md.vals.items()]
+        )
+        log_success = self.logger.log_all_to_redis(
+            metrics_to_log, prefix=self.stage_name,
+        )
+        if not log_success:
+            logging.info(f">> Redis logging failed for metrics: {metrics_to_log}")
         return all_chunks
 
     # CPU intensive task: chunking
@@ -474,8 +473,8 @@ class WikiChunker(WikiStage):
         extra_data = {}
 
         # Verify all files are in chunking metrics
-        failed_files = list(files_set - all_stats.keys())
         tname = 'all_files_in_metrics'
+        failed_files = list(files_set - all_stats.keys())
         test_res[tname] = len(failed_files) == 0
         if not test_res[tname]:
             extra_data[tname] = failed_files
