@@ -99,7 +99,9 @@ class DataManager:
         self.stage_class.execute()
         run_status = self.stage_class.verify_run()
         shard_ind = self.cfg.shard_ind
-        logging.info(f">> Completed {stage_name} shard {shard_ind} with status: {run_status}")
+        logging.info(
+            f">> Completed {stage_name} shard {shard_ind} with status: {run_status}"
+        )
 
     def _load_or_create_processing_state(self):
         if os.path.exists(self.cfg.wiki_processing.state_path):
@@ -233,7 +235,6 @@ class DataManager:
             sbatch_new_params=sbatch_new_params,
             conda_env=conda_env,
         )
-
 
     def _verify_job_start(self, stage_name):
         self.logger = RedisLogger(
