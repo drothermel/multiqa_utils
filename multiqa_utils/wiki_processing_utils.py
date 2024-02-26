@@ -41,11 +41,13 @@ class DataManager:
         self.cfg = cfg
         self.stage_list = [
             'chunking',
+            'entity_set',
             'linking',
             'mapping',
         ]
         self.processing_state = None
         self.logger = None
+        self.curr_stage = None
         self.stage_class = None
 
         self._load_or_create_processing_state()
@@ -74,23 +76,23 @@ class DataManager:
         logging.info(f">> Next stage: {next_stage}")
         self._write_stage_sbatch(next_stage)
 
-    def run_chunking(self):
-        self.stage_class = WikiChunker(self.cfg)
-        job_starting = self._verify_job_start('chunking')
+    def run_stage(self, stage_name):
+        assert stage_name in self.stage_list
+        if stage_name == 'chunking':
+            self.stage_class = WikiChunker(self.cfg)
+        elif stage_name in ['entity_set', 'linking']:
+            self.stage_class = WikiLinker(self.cfg)
+        else:
+            assert False
+        job_starting = self._verify_job_start(stage_name)
         if not job_starting:
-            logging.info(">> Chunking job already ran or is already running, skipping")
+            logging.info(f">> {stage_name} already ran/is running, skipping")
             self.stage_class = None
             return
-        logging.info(">> Running chunking job")
+        logging.info(f">> Running {stage_name} job")
         self.stage_class.set_logger(self.logger)
         self.stage_class.select_job_files()
         self.stage_class.execute()
-
-    def run_linking(self):
-        job_starting = self._verify_job_start('linking')
-
-    def run_mapping(self):
-        job_starting = self._verify_job_start('mapping')
 
     def _load_or_create_processing_state(self):
         if os.path.exists(self.cfg.wiki_processing.state_path):
@@ -259,8 +261,7 @@ class DataManager:
             config_file=cfg.redis_config_file,
             server_dir=cfg.redis_server_dir,
         )
-        # Note this takes stage for reducer which might have different stages
-        # using the same class
+
         job_name = self.stage_class.get_job_name(stage)
         if self.logger.check_is_job_running(job_name):
             return False
@@ -275,16 +276,68 @@ class DataManager:
         return tostart
 
 
-class WikiChunker(FileProcessor):
-    def __init__(self, cfg):
+class WikiStage(FileProcessor):
+    def __init__(self, cfg, stage_name):
         super().__init__(
             cfg.wiki_processing.chunking.num_threads,
             cfg.wiki_processing.chunking.num_procs,
             cfg.wiki_processing.chunking.proc_batch_size,
             skip_exists=cfg.wiki_processing.chunking.skip_exists,
         )
-
         self.cfg = cfg
+        self.stage_name = stage_name
+        self.flag_dir = None
+        self.logger = None
+        
+
+    def set_logger(self, logger):
+        self.logger = logger
+
+    def get_job_name(self, stage):
+        return f'{stage}_{self.cfg.shard_ind}'
+
+
+    def check_verified(self):
+        job_name = self.get_job_name(self.stage_name)
+        flag_path_base = f'{self.flag_dir}{job_name}'
+        if os.path.exists(f'{flag_path_base}.verified.json'):
+            return 'verified'
+        elif os.path.exists(f'{flag_path_base}.error.json'):
+            return 'error'
+        elif os.path.exists(f'{flag_path_base}.incomplete.json'):
+            return 'incomplete'
+        return None
+
+    def check_run_verified(self):
+        run_status = self.check_verified()
+        if run_status is None:
+            run_status = self._verify_run()
+        return run_status
+
+    # ---- Override these ---- #
+    # execute() and other FileProcessor fxns too
+
+    def select_job_files(self):
+        self.files = None
+
+    def _verify_run(self):
+        assert self.logger is not None
+        test_results = None
+        assert test_results in ['verified', 'incomplete', 'error']
+        return test_results
+
+    # ------------------------ #
+
+
+        
+
+
+    
+
+
+class WikiChunker(WikiStage):
+    def __init__(self, cfg, stage_name):
+        super().__init__(cfg, stage_name)
         self.input_dir = cfg.wiki_processing.wiki_input_dir
         self.chunked_dir = cfg.wiki_processing.wiki_chunked_dir
         self.flag_dir = f'{self.chunked_dir}run_flags/'
