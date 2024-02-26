@@ -154,7 +154,7 @@ class DataManager:
 
         if job_status == 'incomplete':
             flag_dir = self.stage_class.flag_dir
-            job_name = self.stage_class.get_job_name(stage_name)
+            job_name = self.stage_class.get_job_name()
             job_data = fu.load_file(f'{flag_dir}{job_name}.incomplete.json')
             num_missing = len(job_data['missing_files'])
             num_verified = num_expected - num_missing
@@ -231,7 +231,7 @@ class DataManager:
             server_dir=cfg.redis_server_dir,
         )
 
-        job_name = self.stage_class.get_job_name(stage_name)
+        job_name = self.stage_class.get_job_name()
         if self.logger.check_is_job_running(job_name):
             return False
 
@@ -262,11 +262,11 @@ class WikiStage(FileProcessor):
     def set_logger(self, logger):
         self.logger = logger
 
-    def get_job_name(self, stage_name):
-        return f'{stage_name}_{self.cfg.shard_ind}'
+    def get_job_name(self)
+        return f'{self.stage_name}_{self.cfg.shard_ind}'
 
     def check_verified(self):
-        job_name = self.get_job_name(self.stage_name)
+        job_name = self.get_job_name()
         flag_path_base = f'{self.flag_dir}{job_name}'
         if os.path.exists(f'{flag_path_base}.verified.json'):
             return 'verified'
@@ -300,7 +300,7 @@ class WikiStage(FileProcessor):
             dump_data = extra_data
 
         ## Dump results
-        job_name = self.get_job_name(self.stage_name)
+        job_name = self.get_job_name()
         flag_path = f'{self.flag_dir}{job_name}.{test_results}.json'
         fu.dump_file(dump_data, flag_path, verbose=True)
         return test_results
