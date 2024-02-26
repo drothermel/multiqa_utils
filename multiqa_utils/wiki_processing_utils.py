@@ -55,7 +55,16 @@ class DataManager:
     def save_processing_state(self):
         fu.dumpfile(self.processing_state, self.cfg.wiki_processing.state_path)
 
-    def get_next_processsing_stage(self):
+    def set_stage_class_from_stage_name(self, stage_name):
+        assert stage_name in self.stage_list
+        if stage_name == 'chunking':
+            self.stage_class = WikiChunker(self.cfg)
+        elif stage_name in ['entity_set', 'linking']:
+            self.stage_class = WikiLinker(self.cfg)
+        else:
+            assert False
+
+    def get_next_processing_stage_name(self):
         for stage_name in self.stage_list:
             if not self._validate_stage_complete(stage_name):
                 return stage_name
@@ -67,7 +76,7 @@ class DataManager:
         self.save_processing_state()
 
         # Get next incomplete stage
-        next_stage_name = self.get_next_processing_stage()
+        next_stage_name = self.get_next_processing_stage_name()
         if next_stage_name is None:
             logging.info(">> All stages completed already")
             return
@@ -77,13 +86,7 @@ class DataManager:
         self._write_stage_sbatch(next_stage_name)
 
     def run_stage(self, stage_name):
-        assert stage_name in self.stage_list
-        if stage_name == 'chunking':
-            self.stage_class = WikiChunker(self.cfg)
-        elif stage_name in ['entity_set', 'linking']:
-            self.stage_class = WikiLinker(self.cfg)
-        else:
-            assert False
+        self.set_stage_class_from_stage_name(stage_name)
         job_starting = self._verify_job_start(stage_name)
         if not job_starting:
             logging.info(f">> {stage_name} already ran/is running, skipping")
@@ -133,17 +136,20 @@ class DataManager:
             self.save_processing_state()
             return True
 
+        self.set_stage_class_from_stage_name(stage_name)
         job_status = self.stage_class.check_verified()
         if job_status == 'error':
             self.processing_state[stage_name]['job_error'] = True
             self.save_processing_state()
             logging.info(">> WARNING: this stage isn't complete, there was an error")
+            self.stage_class = None
             return True
 
         if job_status == 'verified':
             self.processing_state[stage_name]['complete'] = True
             self.processing_state[stage_name]['verified_runs'] = num_expected
             self.save_processing_state()
+            self.stage_class = None
             return True
 
         if job_status == 'incomplete':
@@ -154,7 +160,10 @@ class DataManager:
             num_verified = num_expected - num_missing
             self.processing_state[stage_name]['verified_runs'] = num_verified
             self.save_processing_state()
+            self.stage_class = None
             return False
+
+        self.stage_class = None
         return False
 
     # The sbatch writing only chekcs the state file, not RedisLogger, and
