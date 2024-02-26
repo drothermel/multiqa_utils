@@ -13,6 +13,7 @@ from genre.utils import (
 )
 from genre.trie import Trie
 
+
 def load_genre_model(genre_model_path, batch_size_toks=2048 * 7):
     genre_model = GENRE.from_pretrained(genre_model_path).eval()
     genre_model = genre_model.cuda()
@@ -20,17 +21,27 @@ def load_genre_model(genre_model_path, batch_size_toks=2048 * 7):
     genre_model.cfg.dataset.max_tokens = batch_size_toks
     return genre_model
 
+
 # Assumes a list of dicts each containing a "title" and "content" key
 def load_and_prepare_wiki_data(file_path):
     file_data = fu.load_file(file_path)
     prefixes = [f'Title: {fd["title"]} Text: ' for fd in file_data]
     # Brackets break the model, replace with spaces to avoid shifting inds
-    text_strs = [f'{pr}{fd["content"]}'.replace('[', ' ').replace(']', ' ') for pr, fd in zip(prefixes, file_data)]
+    text_strs = [
+        f'{pr}{fd["content"]}'.replace('[', ' ').replace(']', ' ')
+        for pr, fd in zip(prefixes, file_data)
+    ]
     prefix_lens = [len(pr) for pr in prefixes]
 
-    input_data = [{
-        'text': tx, 'pref_len': pl, 'page_id': fd['page_id'], 'chunk_id': fd['chunk_id'],
-    } for tx, pl, fd in zip(text_strs, prefix_lens, file_data)]
+    input_data = [
+        {
+            'text': tx,
+            'pref_len': pl,
+            'page_id': fd['page_id'],
+            'chunk_id': fd['chunk_id'],
+        }
+        for tx, pl, fd in zip(text_strs, prefix_lens, file_data)
+    ]
     return input_data
 
 
@@ -58,7 +69,9 @@ def process_preds_batch(input_data, preds):
     all_out_sents = []
     for i in range(len(preds[0])):
         output_sents = get_entity_spans_post_processing(
-            [e[i]["text"] for e in preds]  # this is where we (could) take the best scoring
+            [
+                e[i]["text"] for e in preds
+            ]  # this is where we (could) take the best scoring
         )
         out_ents = get_entity_spans_finalize(
             input_sents,
@@ -71,13 +84,15 @@ def process_preds_batch(input_data, preds):
     for pred_num, text_ents in enumerate(all_out_ents):
         for text_num, ents in enumerate(text_ents):
             if len(all_out) <= text_num:
-                all_out.append({
-                    'page_id': input_data[text_num]['page_id'],
-                    'chunk_id': input_data[text_num]['chunk_id'],
-                    'pred': [],
-                    'ents': [],
-                    'all_ents': set(),
-                })
+                all_out.append(
+                    {
+                        'page_id': input_data[text_num]['page_id'],
+                        'chunk_id': input_data[text_num]['chunk_id'],
+                        'pred': [],
+                        'ents': [],
+                        'all_ents': set(),
+                    }
+                )
             ents_f = [(s, l, e.replace('_', ' ').strip()) for s, l, e in ents if l > 2]
             all_out[text_num]['pred'].append(preds[text_num][pred_num])
             all_out[text_num]['ents'].append(ents_f)
@@ -97,7 +112,6 @@ def build_dump_return_cand_trie(entities, genre_model, outpath):
     )
     fu.dumppkl(cand_trie, path)
     return cand_trie
-
 
 
 # This should be done before running any scripts

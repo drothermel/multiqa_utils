@@ -289,14 +289,12 @@ class WikiStage(FileProcessor):
         self.flag_dir = None
         self.logger = None
         self.file_metric_key = 'all_files_in_metrics'
-        
 
     def set_logger(self, logger):
         self.logger = logger
 
     def get_job_name(self, stage):
         return f'{stage}_{self.cfg.shard_ind}'
-
 
     def check_verified(self):
         job_name = self.get_job_name(self.stage_name)
@@ -319,7 +317,9 @@ class WikiStage(FileProcessor):
     def _get_test_results_dump_flag_file(self, test_res, extra_data):
         if self.file_metric_key not in test_res:
             test_res[self.file_metric_key] = False
-            extra_data[self.file_metric_key] = f'Expected key missing: {self.file_metric_key}'
+            extra_data[
+                self.file_metric_key
+            ] = f'Expected key missing: {self.file_metric_key}'
 
         ## Convert test results into flag
         dump_data = ['']
@@ -337,24 +337,27 @@ class WikiStage(FileProcessor):
         fu.dump_file(dump_data, flag_path, verbose=True)
         return test_results
 
-
     def _check_expected_vs_file_path_redis(self):
         expected_files = set(self.files)
-        logged_files = set(self.logger.read_from_redis(
-            data_type='list',
-            name=f'{self.stage_name}.file_path',
-        ))
+        logged_files = set(
+            self.logger.read_from_redis(
+                data_type='list',
+                name=f'{self.stage_name}.file_path',
+            )
+        )
         failed_files = list(expected_files - logged_files)
         return failed_files
 
     def _standard_update_test_res_extra_data(
-        self, tname, test_res, extra_data, failed_files,
+        self,
+        tname,
+        test_res,
+        extra_data,
+        failed_files,
     ):
         test_res[tname] = len(failed_files) == 0
         if not test_res[tname]:
             extra_data[tname] = failed_files
-        
-
 
     # ---- Override these ---- #
     # execute() and other FileProcessor fxns too
@@ -433,9 +436,7 @@ class WikiChunker(WikiStage):
                         num_toks,
                         metric_type='hist',
                     )
-                max_len_chunk_chars = max(
-                    [len(c['chunk_text']) for c in page_chunks]
-                )
+                max_len_chunk_chars = max([len(c['chunk_text']) for c in page_chunks])
             md.vals['max_num_chunks_per_page'] = max(
                 md.vals['max_num_chunks_per_page'], num_chunks
             )
@@ -445,11 +446,10 @@ class WikiChunker(WikiStage):
         md.update_agg_stats(no_len=True)
 
         metrics_to_log = [('list_elem', 'file_path', file_path)]
-        metrics_to_log.extend(
-            [('list_elem', v_n, v_d) for v_n, v_d in md.vals.items()]
-        )
+        metrics_to_log.extend([('list_elem', v_n, v_d) for v_n, v_d in md.vals.items()])
         log_success = self.logger.log_all_to_redis(
-            metrics_to_log, prefix=self.stage_name,
+            metrics_to_log,
+            prefix=self.stage_name,
         )
         if not log_success:
             logging.info(f">> Redis logging failed for metrics: {metrics_to_log}")
@@ -511,7 +511,10 @@ class WikiChunker(WikiStage):
         # Verify all files are in chunking metrics
         failed_files = list(files_set - all_stats.keys())
         self._standard_update_test_res_extra_data(
-            self.file_metric_key, test_res, extra_data, failed_files,
+            self.file_metric_key,
+            test_res,
+            extra_data,
+            failed_files,
         )
 
         # Verify no chunks have fewer than one char or tok
@@ -520,7 +523,10 @@ class WikiChunker(WikiStage):
             if fd['chars_per_chunk_min'] == 0:
                 failed_files.append((fp, fd['chars_per_chunk_min']))
         self._standard_update_test_res_extra_data(
-            'has_chars', test_res, extra_data, failed_files,
+            'has_chars',
+            test_res,
+            extra_data,
+            failed_files,
         )
 
         failed_files = []
@@ -528,7 +534,10 @@ class WikiChunker(WikiStage):
             if fd['toks_per_chunk_min'] == 0:
                 failed_files.append((fp, fd['toks_per_chunk_min']))
         self._standard_update_test_res_extra_data(
-            'has_toks', test_res, extra_data, failed_files,
+            'has_toks',
+            test_res,
+            extra_data,
+            failed_files,
         )
 
         # Verify that the output file exists
@@ -538,7 +547,10 @@ class WikiChunker(WikiStage):
             if not os.path.exists(out_fp):
                 failed_files.append((fp, out_fp))
         self._standard_update_test_res_extra_data(
-            'out_file_exists', test_res, extra_data, failed_files,
+            'out_file_exists',
+            test_res,
+            extra_data,
+            failed_files,
         )
 
         # Verify file content
@@ -561,7 +573,10 @@ class WikiChunker(WikiStage):
             if nc != nuc:
                 failed_files.append((fp, nc, nuc))
         self._standard_update_test_res_extra_data(
-            'all_cids_unique', test_res, extra_data, failed_files,
+            'all_cids_unique',
+            test_res,
+            extra_data,
+            failed_files,
         )
 
         failed_files = []
@@ -570,10 +585,12 @@ class WikiChunker(WikiStage):
             if nuc != expected_c:
                 failed_files.append((fp, nuc, expected_c))
         self._standard_update_test_res_extra_data(
-            'expected_num_chunks', test_res, extra_data, failed_files,
+            'expected_num_chunks',
+            test_res,
+            extra_data,
+            failed_files,
         )
         return self._get_test_results_dump_flag_file(test_res, extra_data)
-
 
     # Returns: [(chunk_start_ind, chunk_end_ind, chunk_text), ...]
     def _combine_sentences_into_chunks(self, sentences):
@@ -615,6 +632,7 @@ class WikiChunker(WikiStage):
 
         return chunks
 
+
 class WikiLinker(WikiStage):
     def __init__(self, cfg, stage_name):
         super().__init__(cfg, stage_name)
@@ -637,17 +655,16 @@ class WikiLinker(WikiStage):
         if self.stage_name == 'entity_set':
             # One job for all files
             self.files = all_files
-        
+
         if self.stage_name == 'linking':
             # Sharded jobs
             shard_files = ru.get_curr_shard(all_files, cfg.shard_num, cfg.shard_ind)
             self.files = shard_files
 
-
     def process_file(self, file_path):
         if self.stage_name == 'entity_set':
             return self._process_file_entity_set(file_path)
-        
+
         if self.stage_name == 'linking':
             return self._process_file_linking(file_path)
 
@@ -674,7 +691,6 @@ class WikiLinker(WikiStage):
         if self.stage_name == 'entity_set':
             self._entity_set_results_to_trie_and_dump(self, results)
         return None
-            
 
     def _verify_run(self):
         if self.stage_name == 'entity_set':
@@ -725,7 +741,10 @@ class WikiLinker(WikiStage):
         ## The tests
         failed_files = self._check_expected_vs_file_path_redis()
         self._standard_update_test_res_extra_data(
-            self.file_metric_key, test_res, extra_data, failed_files,
+            self.file_metric_key,
+            test_res,
+            extra_data,
+            failed_files,
         )
 
         tname = 'cand_trie_exists'
@@ -797,7 +816,10 @@ class WikiLinker(WikiStage):
         ## The tests
         failed_files = self._check_expected_vs_file_path_redis()
         self._standard_update_test_res_extra_data(
-            self.file_metric_key, test_res, extra_data, failed_files,
+            self.file_metric_key,
+            test_res,
+            extra_data,
+            failed_files,
         )
 
         failed_files = []
@@ -806,7 +828,10 @@ class WikiLinker(WikiStage):
             if any([len(pr) == 0 for pr in logged_data]):
                 failed_files.append(fn)
         self._standard_update_test_res_extra_data(
-            'all_chunks_have_preds', test_res, extra_data, failed_files,
+            'all_chunks_have_preds',
+            test_res,
+            extra_data,
+            failed_files,
         )
         return self._get_test_results_dump_flag_file(test_res, extra_data)
 
