@@ -190,70 +190,30 @@ class DataManager:
 
     def _create_sbatch(self, stage_name, shards_to_run):
         script_path = self.cfg.wiki_processing.data_manager_script_path
-        # TODO: add the rest of the args
         script_args = {
-            'wiki_processing.stage_to_run': stage_name,  # only thing directly used in script file
+            'wiki_processing.stage_to_run': stage_name,
             'shard_num': self.cfg.wiki_processing[stage_name].sbatch.num_shards,
             'shard_ind': '${SLURM_ARRAY_TASK_ID}',
         }
-        script_args_str = ' '.join(
-            [f'{name}={val}' for name, val in script_args.items()]
-        )
 
-        # Setup the SBATCH args
+        conda_env = self.cfg.wiki_processing[stage_name].sbatch.conda_env
         sbatch_params = {
             'job-name': stage_name,
-            'array': self.get_array_str(shards_to_run),
-            'open-mode': 'append',
-            'output': '/scratch/ddr8143/multiqa/slurm_logs/%x_%A_j%a.out',
-            'error': '/scratch/ddr8143/multiqa/slurm_logs/%x_%A_j%a.err',
-            'export': 'ALL',
+            'array': ru.get_job_array_str(shards_to_run),
             'time': self.cfg.wiki_processing[stage_name].sbatch.run_time,
             'mem': self.cfg.wiki_processing[stage_name].sbatch.mem,
-            'nodes': '1',
-            'tasks-per-node': '1',
             'cpus-per-task': str(self.cfg.wiki_processing[stage_name].sbatch.num_cpus),
         }
         if self.cfg.wiki_processing[stage_name].sbatch.use_gpu:
             sbatch_params['gres'] = 'gpu:rtx8000:1'
-            sbatch_params['account'] = 'cds'
 
-        # Build the rest of the file
-        file_lines = ['#!/bin/bash\n']
-        file_lines.extend(
-            [f'#SBATCH --{name}={val}\n' for name, val in sbatch_params.items()]
+        return ru.make_sbatch_file(
+            script_path=script_path,
+            script_args=script_args,
+            sbatch_new_params=sbatch_new_params,
+            conda_env=conda_env,
         )
-        file_lines.extend(
-            [
-                '\n',
-                'singularity exec --nv --overlay $SCRATCH/overlay-50G-10M_v2.ext3:ro /scratch/work/public/singularity/cuda10.1-cudnn7-devel-ubuntu18.04-20201207.sif /bin/bash -c "\n'
-                '\n'
-                'source /ext3/env.sh\n',
-                'conda activate multiqa\n',
-                '\n',
-                f'python {script_path} {script_args_str} \n',
-                '"\n',
-            ]
-        )
-        return file_lines
 
-    # TODO: make this a util
-    def _get_array_str(self, shards_to_run):
-        if not shards_to_run:
-            return ""  # TODO: is this what I want?
-        sorted_inds = sorted(shards_to_run)
-        array_str = ""
-        start_range = sorted_inds[0]
-        prev = start_range
-        for s in sorted_inds[1:]:
-            if s != prev + 1:
-                array_str += (
-                    f"{start_range}-{prev}," if start_range != prev else f"{prev},"
-                )
-                start_range = s
-            prev = s
-        array_str += f"{start_range}-{prev}" if start_range != prev else f"{prev}"
-        return array_str
 
     def _verify_job_start(self, stage_name):
         self.logger = RedisLogger(
