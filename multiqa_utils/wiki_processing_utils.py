@@ -103,11 +103,13 @@ class DataManager:
         else:
             self.processing_state = {}
 
+        changes = False
         for stage_num, stage_name in enumerate(self.stage_list):
             if stage_name in self.processing_state:
                 # It was loaded from the state file
                 continue
 
+            changes = True
             # Initialize the missing state info
             self.processing_state[stage_name] = {
                 'stage_name': stage_name,
@@ -117,6 +119,8 @@ class DataManager:
                 'verified_runs': set(),
                 'run_error': False,
             }
+        if changes:
+            self.save_processing_state()
 
     # Only call in the sbatch creation flow
     def _validate_stage_complete(self, stage_name):
@@ -200,6 +204,8 @@ class DataManager:
 
     def _create_sbatch(self, stage_name, shards_to_run):
         script_path = self.cfg.wiki_processing.data_manager_script_path
+        if stage_name in ['entity_set', 'linking']:
+            script_path = self.cfg.wiki_processing.data_manager_hydra_old_script_path
         script_args = {
             'wiki_processing.stage_to_run': stage_name,
             'shard_num': self.cfg.wiki_processing[stage_name].sbatch.num_shards,
