@@ -23,17 +23,19 @@ def load_genre_model(genre_model_path, batch_size_toks=2048 * 7):
 # Assumes a list of dicts each containing a "title" and "content" key
 def load_and_prepare_wiki_data(file_path):
     file_data = fu.load_file(file_path)
-    # TODO: add an id in here somewhere for regrouping
-    prefixes = [f'Title: {f["title"]} Text: ' for f in file_data]
+    prefixes = [f'Title: {fd["title"]} Text: ' for fd in file_data]
     # Brackets break the model, replace with spaces to avoid shifting inds
-    text_strs = [f'{p}{f["content"]}'.replace('[', ' ').replace(']', ' ') for p, f in zip(prefixes, file_data)]
-    prefix_lens = [len(p) for p in prefixes]
-    input_data = [{'text': t, 'pref_len': pl} for t, pl in zip(text_strs, prefix_lens)]
+    text_strs = [f'{pr}{fd["content"]}'.replace('[', ' ').replace(']', ' ') for pr, fd in zip(prefixes, file_data)]
+    prefix_lens = [len(pr) for pr in prefixes]
+
+    input_data = [{
+        'text': tx, 'pref_len': pl, 'page_id': fd['page_id'], 'chunk_id': fd['chunk_id'],
+    } for tx, pl, fd in zip(text_strs, prefix_lens, file_data)]
     return input_data
 
 
 # Assumes input_data is a list of dicts that contain a "text" key
-def predict_batch(input_data, genre_model, cand_trie):
+def batched_predict(input_data, genre_model, cand_trie):
     input_sents = [d['text'] for d in input_data]
     prefix_allowed_tokens_fn = get_prefix_allowed_tokens_fn(
         genre_model,
@@ -48,6 +50,8 @@ def predict_batch(input_data, genre_model, cand_trie):
 
 
 # This is the CPU part
+# The load_and_prepare should be deterministic so
+# we should be able to just re-load and rezip this way
 def process_preds_batch(input_data, preds):
     input_sents = [d['text'] for d in input_data]
     all_out_ents = []
@@ -68,6 +72,8 @@ def process_preds_batch(input_data, preds):
         for text_num, ents in enumerate(text_ents):
             if len(all_out) <= text_num:
                 all_out.append({
+                    'page_id': input_data[text_num]['page_id'],
+                    'chunk_id': input_data[text_num]['chunk_id'],
                     'pred': [],
                     'ents': [],
                     'all_ents': set(),
