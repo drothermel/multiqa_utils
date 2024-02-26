@@ -110,7 +110,7 @@ def build_dump_return_cand_trie(entities, genre_model, outpath):
     cand_trie = Trie(
         [genre_model.encode(" }} [ {} ]".format(e))[1:].tolist() for e in entities]
     )
-    fu.dumppkl(cand_trie, path)
+    fu.dumppkl(cand_trie, outpath)
     return cand_trie
 
 

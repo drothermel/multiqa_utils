@@ -11,13 +11,15 @@ import html
 
 from utils.redis_utils import RedisLogger
 from utils.parallel_utils import FileProcessor
+from utils.util_classes import Metrics
 import utils.file_utils as fu
 import utils.run_utils as ru
+import multiqa_utils.genre_utils as gu
 import multiqa_utils.string_utils as su
 
 
 def flatten_list_of_lists(list_of_lists):
-    return [l for sublist in list_of_list for l in sublist]
+    return [li for sublist in list_of_lists for li in sublist]
 
 
 def merge_into_dict(dict1, dict2):
@@ -47,7 +49,6 @@ class DataManager:
         ]
         self.processing_state = None
         self.logger = None
-        self.curr_stage = None
         self.stage_class = None
 
         self._load_or_create_processing_state()
@@ -55,28 +56,7 @@ class DataManager:
     def save_processing_state(self):
         fu.dumpfile(self.processing_state, self.cfg.wiki_processing.state_path)
 
-    def get_next_processsing_stage(self):
-        for stage in self.stage_list:
-            if not self._validate_stage_complete(stage):
-                return stage
-        return None
-
-    # Get the next incomplete stage & write the expected sbatch file
-    def write_next_sbatch(self):
-        # Make sure the state file is initialized first
-        self.save_processing_state()
-
-        # Get next incomplete stage
-        next_stage = self.get_next_processing_stage()
-        if next_stage is None:
-            logging.info(">> All stages completed already")
-            return
-
-        # Write sbatch for that stage
-        logging.info(f">> Next stage: {next_stage}")
-        self._write_stage_sbatch(next_stage)
-
-    def run_stage(self, stage_name):
+    def set_stage_class_from_stage_name(self, stage_name):
         assert stage_name in self.stage_list
         if stage_name == 'chunking':
             self.stage_class = WikiChunker(self.cfg)
@@ -84,6 +64,31 @@ class DataManager:
             self.stage_class = WikiLinker(self.cfg)
         else:
             assert False
+
+    def get_next_processing_stage_name(self):
+        for stage_name in self.stage_list:
+            if not self._validate_stage_complete(stage_name):
+                return stage_name
+        return None
+
+    # Get the next incomplete stage & write the expected sbatch file
+    def write_next_sbatch(self):
+        # Get next incomplete stage
+        next_stage_name = self.get_next_processing_stage_name()
+        if next_stage_name is None:
+            logging.info(">> All stages completed already")
+            return
+
+        # Write sbatch for that stage
+        logging.info(f">> Next stage: {next_stage_name}")
+        self._write_stage_sbatch(next_stage_name)
+
+    def run_stage(self, stage_name):
+        if stage_name == 'sbatch':
+            self.write_next_sbatch()
+            return
+
+        self.set_stage_class_from_stage_name(stage_name)
         job_starting = self._verify_job_start(stage_name)
         if not job_starting:
             logging.info(f">> {stage_name} already ran/is running, skipping")
@@ -93,6 +98,11 @@ class DataManager:
         self.stage_class.set_logger(self.logger)
         self.stage_class.select_job_files()
         self.stage_class.execute()
+        run_status = self.stage_class.verify_run()
+        shard_ind = self.cfg.shard_ind
+        logging.info(
+            f">> Completed {stage_name} shard {shard_ind} with status: {run_status}"
+        )
 
     def _load_or_create_processing_state(self):
         if os.path.exists(self.cfg.wiki_processing.state_path):
@@ -100,84 +110,94 @@ class DataManager:
         else:
             self.processing_state = {}
 
-        for stage_num, stage in enumerate(self.stage_list):
-            if stage in self.processing_state:
+        changes = False
+        for stage_num, stage_name in enumerate(self.stage_list):
+            if stage_name in self.processing_state:
                 # It was loaded from the state file
                 continue
 
+            changes = True
             # Initialize the missing state info
-            self.processing_state[stage] = {
-                'stage': stage,
+            self.processing_state[stage_name] = {
+                'stage_name': stage_name,
                 'stage_num': stage_num,
                 'complete': False,
                 'expected_runs': None,
                 'verified_runs': set(),
                 'run_error': False,
             }
+        if changes:
+            self.save_processing_state()
 
     # Only call in the sbatch creation flow
-    def _validate_stage_complete(self, stage):
+    def _validate_stage_complete(self, stage_name):
         # If the stage is marked complete then its complete
-        if self.processing_state[stage]['complete']:
+        if self.processing_state[stage_name]['complete']:
             return True
 
         # If expected runs is none then this stage hasn't be initialized
-        if self.processing_state[stage]['expected_runs'] is None:
+        if self.processing_state[stage_name]['expected_runs'] is None:
             return False
 
         # If all expected runs have been verified complete, stage is complete
-        num_verified = self.processing_state[stage]['verified_runs']
-        num_expected = self.processing_state[stage]['expected_runs']
+        num_verified = self.processing_state[stage_name]['verified_runs']
+        num_expected = self.processing_state[stage_name]['expected_runs']
         if len(num_verified - num_expected) == 0:
-            self.processing_state[stage]['complete'] = True
+            self.processing_state[stage_name]['complete'] = True
             self.save_processing_state()
             return True
 
+        self.set_stage_class_from_stage_name(stage_name)
         job_status = self.stage_class.check_verified()
         if job_status == 'error':
-            self.processing_state[stage]['job_error'] = True
+            self.processing_state[stage_name]['run_error'] = True
             self.save_processing_state()
             logging.info(">> WARNING: this stage isn't complete, there was an error")
+            self.stage_class = None
             return True
 
         if job_status == 'verified':
-            self.processing_state[stage]['complete'] = True
-            self.processing_state[stage]['verified_runs'] = num_expected
+            self.processing_state[stage_name]['complete'] = True
+            self.processing_state[stage_name]['verified_runs'] = num_expected
             self.save_processing_state()
+            self.stage_class = None
             return True
 
         if job_status == 'incomplete':
             flag_dir = self.stage_class.flag_dir
-            job_name = self.stage_class.get_job_name(stage)
+            job_name = self.stage_class.get_job_name()
             job_data = fu.load_file(f'{flag_dir}{job_name}.incomplete.json')
             num_missing = len(job_data['missing_files'])
             num_verified = num_expected - num_missing
-            self.processing_state[stage]['verified_runs'] = num_verified
+            self.processing_state[stage_name]['verified_runs'] = num_verified
             self.save_processing_state()
+            self.stage_class = None
             return False
+
+        self.stage_class = None
         return False
 
     # The sbatch writing only chekcs the state file, not RedisLogger, and
     # only considers the jobs that have already been marked verified as
     # complete.  Additional checks happen at startup of the jobs kicked off
     # by the sbatch script.
-    def _write_stage_sbatch(self, stage):
-        state = self.processing_state[stage]
+    def _write_stage_sbatch(self, stage_name):
+        state = self.processing_state[stage_name]
 
         # Determine which inds to run (conservatively)
         inds_to_run = []
         if state['expected_runs'] is None:
-            num_shards = cfg.wiki_processing[stage].sbatch.num_shards
+            num_shards = self.cfg.wiki_processing[stage_name].sbatch.num_shards
             state['expected_runs'] = set([i for i in range(num_shards)])
 
         inds_to_run = state['expected_runs'] - state['verified_runs']
         if len(inds_to_run) == 0:
-            logging.info(f">> All inds for this stage ({stage})have been run.")
+            logging.info(f">> All inds for this stage ({stage_name})have been run.")
             return
 
         # Then everything should be written to an sbatch file that has a random
         #    component to its name so it doesn't overwrite previous ones
-        sbatch_file_lines = self._create_sbatch(stage, inds_to_run)
+        sbatch_file_lines = self._create_sbatch(stage_name, inds_to_run)
         rand_v = ''.join(
             random.choices(
                 string.ascii_letters + string.digits,
@@ -185,84 +205,45 @@ class DataManager:
             )
         )
         sbatch_filename = (
-            f'{self.cfg.wiki_processing.sbatch_dir}{stage}.{rand_v}.sbatch'
+            f'{self.cfg.wiki_processing.sbatch_dir}{stage_name}.{rand_v}.sbatch'
         )
         fu.dump_file(sbatch_file_lines, sbatch_filename, ending='txt', verbose=True)
 
-    def _create_sbatch(self, stage, shards_to_run):
+    def _create_sbatch(self, stage_name, shards_to_run):
         script_path = self.cfg.wiki_processing.data_manager_script_path
-        # TODO: add the rest of the args
+        if stage_name in ['entity_set', 'linking']:
+            script_path = self.cfg.wiki_processing.data_manager_hydra_old_script_path
         script_args = {
-            'wiki_processing.stage_to_run': stage,  # only thing directly used in script file
-            'shard_num': self.cfg.wiki_processing[stage].sbatch.num_shards,
+            'wiki_processing.stage_to_run': stage_name,
+            'shard_num': self.cfg.wiki_processing[stage_name].sbatch.num_shards,
             'shard_ind': '${SLURM_ARRAY_TASK_ID}',
         }
-        script_args_str = ' '.join(
-            [f'{name}={val}' for name, val in script_args.items()]
-        )
 
-        # Setup the SBATCH args
+        conda_env = self.cfg.wiki_processing[stage_name].sbatch.conda_env
         sbatch_params = {
-            'job-name': stage,
-            'array': self.get_array_str(shards_to_run),
-            'open-mode': 'append',
-            'output': '/scratch/ddr8143/multiqa/slurm_logs/%x_%A_j%a.out',
-            'error': '/scratch/ddr8143/multiqa/slurm_logs/%x_%A_j%a.err',
-            'export': 'ALL',
-            'time': self.cfg.wiki_processing[stage].sbatch.run_time,
-            'mem': self.cfg.wiki_processing[stage].sbatch.mem,
-            'nodes': '1',
-            'tasks-per-node': '1',
-            'cpus-per-task': str(self.cfg.wiki_processing[stage].sbatch.num_cpus),
+            'job-name': stage_name,
+            'array': ru.get_job_array_str(shards_to_run),
+            'time': self.cfg.wiki_processing[stage_name].sbatch.run_time,
+            'mem': self.cfg.wiki_processing[stage_name].sbatch.mem,
+            'cpus-per-task': str(self.cfg.wiki_processing[stage_name].sbatch.num_cpus),
         }
-        if self.cfg.wiki_processing[stage].sbatch.use_gpu:
+        if self.cfg.wiki_processing[stage_name].sbatch.use_gpu:
             sbatch_params['gres'] = 'gpu:rtx8000:1'
-            sbatch_params['account'] = 'cds'
 
-        # Build the rest of the file
-        file_lines = ['#!/bin/bash\n']
-        file_lines.extend(
-            [f'#SBATCH --{name}={val}\n' for name, val in sbatch_params.items()]
+        return ru.make_sbatch_file(
+            script_path=script_path,
+            script_args=script_args,
+            sbatch_new_params=sbatch_params,
+            conda_env=conda_env,
         )
-        file_lines.extend(
-            [
-                '\n',
-                'singularity exec --nv --overlay $SCRATCH/overlay-50G-10M_v2.ext3:ro /scratch/work/public/singularity/cuda10.1-cudnn7-devel-ubuntu18.04-20201207.sif /bin/bash -c "\n'
-                '\n'
-                'source /ext3/env.sh\n',
-                'conda activate multiqa\n',
-                '\n',
-                f'python {script_path} {script_args_str} \n',
-                '"\n',
-            ]
-        )
-        return file_lines
 
-    # TODO: make this a util
-    def _get_array_str(self, shards_to_run):
-        if not shards_to_run:
-            return ""  # TODO: is this what I want?
-        sorted_inds = sorted(shards_to_run)
-        array_str = ""
-        start_range = sorted_inds[0]
-        prev = start_range
-        for s in sorted_inds[1:]:
-            if s != prev + 1:
-                array_str += (
-                    f"{start_range}-{prev}," if start_range != prev else f"{prev},"
-                )
-                start_range = s
-            prev = s
-        array_str += f"{start_range}-{prev}" if start_range != prev else f"{prev}"
-        return array_str
-
-    def _verify_job_start(self, stage):
+    def _verify_job_start(self, stage_name):
         self.logger = RedisLogger(
-            config_file=cfg.redis_config_file,
-            server_dir=cfg.redis_server_dir,
+            config_file=self.cfg.redis_config_file,
+            server_dir=self.cfg.redis_server_dir,
         )
 
-        job_name = self.stage_class.get_job_name(stage)
+        job_name = self.stage_class.get_job_name()
         if self.logger.check_is_job_running(job_name):
             return False
 
@@ -293,11 +274,11 @@ class WikiStage(FileProcessor):
     def set_logger(self, logger):
         self.logger = logger
 
-    def get_job_name(self, stage):
-        return f'{stage}_{self.cfg.shard_ind}'
+    def get_job_name(self):
+        return f'{self.stage_name}_{self.cfg.shard_ind}'
 
     def check_verified(self):
-        job_name = self.get_job_name(self.stage_name)
+        job_name = self.get_job_name()
         flag_path_base = f'{self.flag_dir}{job_name}'
         if os.path.exists(f'{flag_path_base}.verified.json'):
             return 'verified'
@@ -310,10 +291,9 @@ class WikiStage(FileProcessor):
     def check_run_verified(self):
         run_status = self.check_verified()
         if run_status is None:
-            run_status = self._verify_run()
+            run_status = self.verify_run()
         return run_status
 
-    # Expects: 'all_files_in_metrics'
     def _get_test_results_dump_flag_file(self, test_res, extra_data):
         if self.file_metric_key not in test_res:
             test_res[self.file_metric_key] = False
@@ -321,7 +301,7 @@ class WikiStage(FileProcessor):
                 self.file_metric_key
             ] = f'Expected key missing: {self.file_metric_key}'
 
-        ## Convert test results into flag
+        # Convert test results into flag
         dump_data = ['']
         test_results = 'verified'
         if not test_res[self.file_metric_key]:
@@ -331,8 +311,8 @@ class WikiStage(FileProcessor):
             test_results = 'error'
             dump_data = extra_data
 
-        ## Dump results
-        job_name = self.get_job_name(self.stage_name)
+        # Dump results
+        job_name = self.get_job_name()
         flag_path = f'{self.flag_dir}{job_name}.{test_results}.json'
         fu.dump_file(dump_data, flag_path, verbose=True)
         return test_results
@@ -346,7 +326,7 @@ class WikiStage(FileProcessor):
             )
         )
         failed_files = list(expected_files - logged_files)
-        return failed_files
+        return logged_files, failed_files
 
     def _standard_update_test_res_extra_data(
         self,
@@ -365,7 +345,7 @@ class WikiStage(FileProcessor):
     def select_job_files(self):
         self.files = None
 
-    def _verify_run(self):
+    def verify_run(self):
         assert self.logger is not None
         test_results = None
         assert test_results in ['verified', 'incomplete', 'error']
@@ -387,19 +367,21 @@ class WikiChunker(WikiStage):
         self.max_words = cfg.wiki_processing.chunk_max_word_len
 
         # Unused, but might be needed for word_tokenize and sent_tokenize to work
-        self.tokenizer = load(f"tokenizers/punkt/english.pickle")
+        self.tokenizer = load("tokenizers/punkt/english.pickle")
         self.detokenizer = su.get_detokenizer()
 
     def select_job_files(self):
-        glob_all = fu.get_recursive_files(self.input_dir)
+        all_files = fu.get_recursive_files(self.input_dir)
         all_files = [f for f in all_files if '/wiki_' in f]
-        shard_files = ru.get_curr_shard(all_files, cfg.shard_num, cfg.shard_ind)
+        shard_files = ru.get_curr_shard(
+            all_files, self.cfg.shard_num, self.cfg.shard_ind
+        )
         self.files = shard_files
 
     def get_output_from_inpath(self, file_path):
         # basepath/AA/wiki_00
-        init_name = fu.get_file_from_path(init_filepath)
-        init_dir = fu.get_dir_from_path(init_filepath)
+        init_name = fu.get_file_from_path(file_path)
+        init_dir = fu.get_dir_from_path(file_path)
         sub_dirname = init_dir.split(os.path.sep)[-1]
         return os.path.join(self.chunked_dir, f'{sub_dirname}_{init_name}.pkl')
 
@@ -436,7 +418,6 @@ class WikiChunker(WikiStage):
                         num_toks,
                         metric_type='hist',
                     )
-                max_len_chunk_chars = max([len(c['chunk_text']) for c in page_chunks])
             md.vals['max_num_chunks_per_page'] = max(
                 md.vals['max_num_chunks_per_page'], num_chunks
             )
@@ -486,9 +467,9 @@ class WikiChunker(WikiStage):
         ]
         return chunks
 
-    def _verify_run(self):
+    def verify_run(self):
         assert self.logger is not None
-        logging.info(">> Running _verify_run")
+        logging.info(">> Running verify_run")
 
         # Get relevant stats
         files_set = set(self.files)
@@ -504,7 +485,7 @@ class WikiChunker(WikiStage):
                 'toks_per_chunk_min': cmets['toks_per_chunk_min'][i],
             }
 
-        ## Calculate test results
+        # -- Calculate test results -- #
         test_res = {}
         extra_data = {}
 
@@ -650,7 +631,7 @@ class WikiLinker(WikiStage):
 
     def select_job_files(self):
         # For either job type, get all the chunked files
-        glob_all = fu.get_recursive_files(self.chunked_dir)
+        all_files = fu.get_recursive_files(self.chunked_dir)
         all_files = [f for f in all_files if '/wiki_' in f]
         if self.stage_name == 'entity_set':
             # One job for all files
@@ -658,7 +639,9 @@ class WikiLinker(WikiStage):
 
         if self.stage_name == 'linking':
             # Sharded jobs
-            shard_files = ru.get_curr_shard(all_files, cfg.shard_num, cfg.shard_ind)
+            shard_files = ru.get_curr_shard(
+                all_files, self.cfg.shard_num, self.cfg.shard_ind
+            )
             self.files = shard_files
 
     def process_file(self, file_path):
@@ -675,12 +658,12 @@ class WikiLinker(WikiStage):
             if self.link_type == 'genre':
                 logging.info(">>  Loading genre model")
                 self.genre_model = gu.load_genre_model(
-                    self.cfg.wiki_processing.linking.genre_model_path,
-                    self.cfg.wiki_processing.linking.genre_batch_size,
+                    self.cfg.wiki_processing.genre_model_path,
+                    self.cfg.wiki_processing.genre_batch_size,
                 )
                 logging.info(">>  Loading genre candidate trie")
                 self.genre_cand_trie = fu.load_file(
-                    self.cfg.wiki_processing.linking.genre_cand_trie_path
+                    self.cfg.wiki_processing.genre_cand_trie_path
                 )
 
         # Both versions need to run process file in threads
@@ -689,10 +672,10 @@ class WikiLinker(WikiStage):
         # Linking dumps the results per-file and returns nothing
         # Entity set needs to aggregate the results
         if self.stage_name == 'entity_set':
-            self._entity_set_results_to_trie_and_dump(self, results)
+            self._entity_set_results_to_trie_and_dump(all_results)
         return None
 
-    def _verify_run(self):
+    def verify_run(self):
         if self.stage_name == 'entity_set':
             return self._verify_entity_set_run()
 
@@ -727,10 +710,10 @@ class WikiLinker(WikiStage):
 
         # Make and dump trie, model needed for tokenization
         genre_model = gu.load_genre_model(
-            self.cfg.wiki_processing.linking.genre_model_path,
-            self.cfg.wiki_processing.linking.genre_batch_size,
+            self.cfg.wiki_processing.genre_model_path,
+            self.cfg.wiki_processing.genre_batch_size,
         )
-        cand_trie_outpath = self.cfg.wiki_processing.linking.genre_cand_trie_path
+        cand_trie_outpath = self.cfg.wiki_processing.genre_cand_trie_path
         _ = gu.build_dump_return_cand_trie(all_ents, genre_model, cand_trie_outpath)
 
     def _verify_entity_set_run(self):
@@ -738,8 +721,8 @@ class WikiLinker(WikiStage):
         test_res = {}
         extra_data = {}
 
-        ## The tests
-        failed_files = self._check_expected_vs_file_path_redis()
+        # -- Run tests -- #
+        _, failed_files = self._check_expected_vs_file_path_redis()
         self._standard_update_test_res_extra_data(
             self.file_metric_key,
             test_res,
@@ -749,7 +732,7 @@ class WikiLinker(WikiStage):
 
         tname = 'cand_trie_exists'
         failed_files = []
-        cand_trie_path = self.cfg.wiki_processing.linking.genre_cand_trie_path
+        cand_trie_path = self.cfg.wiki_processing.genre_cand_trie_path
         if not os.path.exists(cand_trie_path):
             failed_files.append(cand_trie_path)
         test_res[tname] = len(failed_files) == 0
@@ -778,13 +761,13 @@ class WikiLinker(WikiStage):
         return self._get_test_results_dump_flag_file(test_res, extra_data)
 
     def _get_outpath_from_inpath_linking(self, file_path):
-        init_name = fu.get_file_from_path(init_filepath)
+        init_name = fu.get_file_from_path(file_path)
         return os.path.join(self.linked_dir, f'{init_name}.pkl')
 
     def _process_file_linking(self, file_path):
         # Check if already done, load data
         outpath = self._get_outpath_from_inpath_linking(file_path)
-        if skip_exists and os.path.exists(outpath):
+        if self.skip_exists and os.path.exists(outpath):
             return
 
         results = []
@@ -795,7 +778,7 @@ class WikiLinker(WikiStage):
             results = gu.batched_predict(
                 input_data,
                 self.genre_model,
-                cand_trie,
+                self.genre_cand_trie,
             )
         else:
             assert False, f">> ERROR: Unknown link type: {self.link_type}"
@@ -813,8 +796,8 @@ class WikiLinker(WikiStage):
         test_res = {}
         extra_data = {}
 
-        ## The tests
-        failed_files = self._check_expected_vs_file_path_redis()
+        # -- Run tests -- #
+        logged_files, failed_files = self._check_expected_vs_file_path_redis()
         self._standard_update_test_res_extra_data(
             self.file_metric_key,
             test_res,
@@ -836,6 +819,7 @@ class WikiLinker(WikiStage):
         return self._get_test_results_dump_flag_file(test_res, extra_data)
 
 
+"""
 class WikiMapper(FileProcessor):
     def __init__(self, cfg):
         self.cfg = cfg
@@ -855,7 +839,7 @@ class WikiMapper(FileProcessor):
 
     def get_output_from_inpath(self, file_path):
         # chunked_dir/AA_wiki_00.pkl
-        init_name = fu.get_file_from_path(init_filepath)
+        init_name = fu.get_file_from_path(file_path)
         return os.path.join(self.mapped_dir, init_name)
 
     # Item is a single chunk info dict
@@ -1355,6 +1339,7 @@ def glob_alpha_subsegs(alpha_path):
 
 def glob_all_wiki_files(top_wiki_dir):
     return sorted(glob.glob(f"{top_wiki_dir}[A-Z][A-Z]/wiki_[0-9][0-9]"))
+"""
 
 
 # ##################################
