@@ -11,6 +11,7 @@ import html
 
 from utils.redis_utils import RedisLogger
 from utils.parallel_utils import FileProcessor
+from utils.util_classes import Metrics
 import utils.file_utils as fu
 import utils.run_utils as ru
 import multiqa_utils.genre_utils as gu
@@ -18,7 +19,7 @@ import multiqa_utils.string_utils as su
 
 
 def flatten_list_of_lists(list_of_lists):
-    return [l for sublist in list_of_list for l in sublist]
+    return [li for sublist in list_of_lists for li in sublist]
 
 
 def merge_into_dict(dict1, dict2):
@@ -186,7 +187,7 @@ class DataManager:
         # Determine which inds to run (conservatively)
         inds_to_run = []
         if state['expected_runs'] is None:
-            num_shards = cfg.wiki_processing[stage_name].sbatch.num_shards
+            num_shards = self.cfg.wiki_processing[stage_name].sbatch.num_shards
             state['expected_runs'] = set([i for i in range(num_shards)])
 
         inds_to_run = state['expected_runs'] - state['verified_runs']
@@ -232,14 +233,14 @@ class DataManager:
         return ru.make_sbatch_file(
             script_path=script_path,
             script_args=script_args,
-            sbatch_new_params=sbatch_new_params,
+            sbatch_new_params=sbatch_params,
             conda_env=conda_env,
         )
 
     def _verify_job_start(self, stage_name):
         self.logger = RedisLogger(
-            config_file=cfg.redis_config_file,
-            server_dir=cfg.redis_server_dir,
+            config_file=self.cfg.redis_config_file,
+            server_dir=self.cfg.redis_server_dir,
         )
 
         job_name = self.stage_class.get_job_name()
@@ -300,7 +301,7 @@ class WikiStage(FileProcessor):
                 self.file_metric_key
             ] = f'Expected key missing: {self.file_metric_key}'
 
-        ## Convert test results into flag
+        # Convert test results into flag
         dump_data = ['']
         test_results = 'verified'
         if not test_res[self.file_metric_key]:
@@ -310,7 +311,7 @@ class WikiStage(FileProcessor):
             test_results = 'error'
             dump_data = extra_data
 
-        ## Dump results
+        # Dump results
         job_name = self.get_job_name()
         flag_path = f'{self.flag_dir}{job_name}.{test_results}.json'
         fu.dump_file(dump_data, flag_path, verbose=True)
@@ -325,7 +326,7 @@ class WikiStage(FileProcessor):
             )
         )
         failed_files = list(expected_files - logged_files)
-        return failed_files
+        return logged_files, failed_files
 
     def _standard_update_test_res_extra_data(
         self,
@@ -346,7 +347,7 @@ class WikiStage(FileProcessor):
 
     def verify_run(self):
         assert self.logger is not None
-        ttest_results = None
+        test_results = None
         assert test_results in ['verified', 'incomplete', 'error']
         return test_results
 
@@ -366,19 +367,21 @@ class WikiChunker(WikiStage):
         self.max_words = cfg.wiki_processing.chunk_max_word_len
 
         # Unused, but might be needed for word_tokenize and sent_tokenize to work
-        self.tokenizer = load(f"tokenizers/punkt/english.pickle")
+        self.tokenizer = load("tokenizers/punkt/english.pickle")
         self.detokenizer = su.get_detokenizer()
 
     def select_job_files(self):
-        glob_all = fu.get_recursive_files(self.input_dir)
+        all_files = fu.get_recursive_files(self.input_dir)
         all_files = [f for f in all_files if '/wiki_' in f]
-        shard_files = ru.get_curr_shard(all_files, cfg.shard_num, cfg.shard_ind)
+        shard_files = ru.get_curr_shard(
+            all_files, self.cfg.shard_num, self.cfg.shard_ind
+        )
         self.files = shard_files
 
     def get_output_from_inpath(self, file_path):
         # basepath/AA/wiki_00
-        init_name = fu.get_file_from_path(init_filepath)
-        init_dir = fu.get_dir_from_path(init_filepath)
+        init_name = fu.get_file_from_path(file_path)
+        init_dir = fu.get_dir_from_path(file_path)
         sub_dirname = init_dir.split(os.path.sep)[-1]
         return os.path.join(self.chunked_dir, f'{sub_dirname}_{init_name}.pkl')
 
@@ -415,7 +418,6 @@ class WikiChunker(WikiStage):
                         num_toks,
                         metric_type='hist',
                     )
-                max_len_chunk_chars = max([len(c['chunk_text']) for c in page_chunks])
             md.vals['max_num_chunks_per_page'] = max(
                 md.vals['max_num_chunks_per_page'], num_chunks
             )
@@ -483,7 +485,7 @@ class WikiChunker(WikiStage):
                 'toks_per_chunk_min': cmets['toks_per_chunk_min'][i],
             }
 
-        ## Calculate test results
+        # -- Calculate test results -- #
         test_res = {}
         extra_data = {}
 
@@ -629,7 +631,7 @@ class WikiLinker(WikiStage):
 
     def select_job_files(self):
         # For either job type, get all the chunked files
-        glob_all = fu.get_recursive_files(self.chunked_dir)
+        all_files = fu.get_recursive_files(self.chunked_dir)
         all_files = [f for f in all_files if '/wiki_' in f]
         if self.stage_name == 'entity_set':
             # One job for all files
@@ -637,7 +639,9 @@ class WikiLinker(WikiStage):
 
         if self.stage_name == 'linking':
             # Sharded jobs
-            shard_files = ru.get_curr_shard(all_files, cfg.shard_num, cfg.shard_ind)
+            shard_files = ru.get_curr_shard(
+                all_files, self.cfg.shard_num, self.cfg.shard_ind
+            )
             self.files = shard_files
 
     def process_file(self, file_path):
@@ -668,7 +672,7 @@ class WikiLinker(WikiStage):
         # Linking dumps the results per-file and returns nothing
         # Entity set needs to aggregate the results
         if self.stage_name == 'entity_set':
-            self._entity_set_results_to_trie_and_dump(results)
+            self._entity_set_results_to_trie_and_dump(all_results)
         return None
 
     def verify_run(self):
@@ -717,8 +721,8 @@ class WikiLinker(WikiStage):
         test_res = {}
         extra_data = {}
 
-        ## The tests
-        failed_files = self._check_expected_vs_file_path_redis()
+        # -- Run tests -- #
+        _, failed_files = self._check_expected_vs_file_path_redis()
         self._standard_update_test_res_extra_data(
             self.file_metric_key,
             test_res,
@@ -757,13 +761,13 @@ class WikiLinker(WikiStage):
         return self._get_test_results_dump_flag_file(test_res, extra_data)
 
     def _get_outpath_from_inpath_linking(self, file_path):
-        init_name = fu.get_file_from_path(init_filepath)
+        init_name = fu.get_file_from_path(file_path)
         return os.path.join(self.linked_dir, f'{init_name}.pkl')
 
     def _process_file_linking(self, file_path):
         # Check if already done, load data
         outpath = self._get_outpath_from_inpath_linking(file_path)
-        if skip_exists and os.path.exists(outpath):
+        if self.skip_exists and os.path.exists(outpath):
             return
 
         results = []
@@ -774,7 +778,7 @@ class WikiLinker(WikiStage):
             results = gu.batched_predict(
                 input_data,
                 self.genre_model,
-                cand_trie,
+                self.genre_cand_trie,
             )
         else:
             assert False, f">> ERROR: Unknown link type: {self.link_type}"
@@ -792,8 +796,8 @@ class WikiLinker(WikiStage):
         test_res = {}
         extra_data = {}
 
-        ## The tests
-        failed_files = self._check_expected_vs_file_path_redis()
+        # -- Run tests -- #
+        logged_files, failed_files = self._check_expected_vs_file_path_redis()
         self._standard_update_test_res_extra_data(
             self.file_metric_key,
             test_res,
@@ -815,6 +819,7 @@ class WikiLinker(WikiStage):
         return self._get_test_results_dump_flag_file(test_res, extra_data)
 
 
+"""
 class WikiMapper(FileProcessor):
     def __init__(self, cfg):
         self.cfg = cfg
@@ -834,7 +839,7 @@ class WikiMapper(FileProcessor):
 
     def get_output_from_inpath(self, file_path):
         # chunked_dir/AA_wiki_00.pkl
-        init_name = fu.get_file_from_path(init_filepath)
+        init_name = fu.get_file_from_path(file_path)
         return os.path.join(self.mapped_dir, init_name)
 
     # Item is a single chunk info dict
@@ -1334,6 +1339,7 @@ def glob_alpha_subsegs(alpha_path):
 
 def glob_all_wiki_files(top_wiki_dir):
     return sorted(glob.glob(f"{top_wiki_dir}[A-Z][A-Z]/wiki_[0-9][0-9]"))
+"""
 
 
 # ##################################
