@@ -643,12 +643,12 @@ class WikiLinker(WikiStage):
             if self.link_type == 'genre':
                 logging.info(">>  Loading genre model")
                 self.genre_model = gu.load_genre_model(
-                    self.cfg.wiki_processing.linking.genre_model_path,
-                    self.cfg.wiki_processing.linking.genre_batch_size,
+                    self.cfg.wiki_processing.genre_model_path,
+                    self.cfg.wiki_processing.genre_batch_size,
                 )
                 logging.info(">>  Loading genre candidate trie")
                 self.genre_cand_trie = fu.load_file(
-                    self.cfg.wiki_processing.linking.genre_cand_trie_path
+                    self.cfg.wiki_processing.genre_cand_trie_path
                 )
 
         # Both versions need to run process file in threads
@@ -695,10 +695,10 @@ class WikiLinker(WikiStage):
 
         # Make and dump trie, model needed for tokenization
         genre_model = gu.load_genre_model(
-            self.cfg.wiki_processing.linking.genre_model_path,
-            self.cfg.wiki_processing.linking.genre_batch_size,
+            self.cfg.wiki_processing.genre_model_path,
+            self.cfg.wiki_processing.genre_batch_size,
         )
-        cand_trie_outpath = self.cfg.wiki_processing.linking.genre_cand_trie_path
+        cand_trie_outpath = self.cfg.wiki_processing.genre_cand_trie_path
         _ = gu.build_dump_return_cand_trie(all_ents, genre_model, cand_trie_outpath)
 
     def _verify_entity_set_run(self):
@@ -717,7 +717,7 @@ class WikiLinker(WikiStage):
 
         tname = 'cand_trie_exists'
         failed_files = []
-        cand_trie_path = self.cfg.wiki_processing.linking.genre_cand_trie_path
+        cand_trie_path = self.cfg.wiki_processing.genre_cand_trie_path
         if not os.path.exists(cand_trie_path):
             failed_files.append(cand_trie_path)
         test_res[tname] = len(failed_files) == 0
