@@ -365,6 +365,7 @@ class WikiChunker(WikiStage):
 
         self.target_words = cfg.wiki_processing.chunk_target_word_len
         self.max_words = cfg.wiki_processing.chunk_max_word_len
+        self.regexp, self.pattterns = su.get_regexp_and_patterns()
 
         # Unused, but might be needed for word_tokenize and sent_tokenize to work
         self.tokenizer = load("tokenizers/punkt/english.pickle")
@@ -445,8 +446,12 @@ class WikiChunker(WikiStage):
         title = item['title']
 
         # Normalize the text and title
-        fixed_text = su.base_fix_string(self.detokenizer, text)
-        fixed_title = su.base_fix_string(self.detokenizer, title)
+        fixed_text = su.base_fix_string(
+            self.detokenizer, text, self.regexp, self.patterns
+        )
+        fixed_title = su.base_fix_string(
+            self.detokenizer, title, self.regexp, self.patterns
+        )
 
         # Chunk the text
         sentences = sent_tokenize(fixed_text)

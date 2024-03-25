@@ -75,12 +75,16 @@ def apply_norms(ori_str, norm_fxns):
 
 def get_all_norm_fxns():
     dtk = get_detokenizer()
+
+    def apply_qnn(st):
+        qnn_norm(dtk, st)
+
     # matches types in cfg.wiki_processing.norm_types
     norm_fxns = {
         'l': lnorm,
         'qnn': qmp_norm,
         'prep': prep_norm,
-        'qnn_l': lambda st: apply_norm(st, [lnorm, qnn]),
+        'qnn_l': lambda st: apply_norms(st, [lnorm, apply_qnn]),
         'prep_l': lambda st: apply_norms(st, [prep_norm, lnorm]),
         'prep_qnn': lambda st: apply_norms(st, [prep_norm, apply_qnn]),
         'prep_qnn_l': lambda st: apply_norms(st, [prep_norm, apply_qnn, lnorm]),
@@ -103,9 +107,9 @@ def get_regexp_and_patterns():
         "&gt;": ">",
         "&quot;": '"',
         "&amp;": "&",
-        "\[\[Category:": "Category: ",
-        "\[\[": "",
-        "\]\]": "",
+        "\[\[Category:": "Category: ",  # noqa W605
+        "\[\[": "",  # noqa W605
+        "\]\]": "",  # noqa W605
     }
 
     # Compile a single regex pattern that matches any of the keys
@@ -167,8 +171,8 @@ def check_valid_span(span):
     return True
 
 
-def base_fix_string(detokenizer, text):
-    fixed_text = fix_html_strings(text, self.regexp, self.patterns)
+def base_fix_string(detokenizer, text, regexp, patterns):
+    fixed_text = fix_html_strings(text, regexp, patterns)
     if fixed_text is None or len(fixed_text) == 0:
         return None
     fixed_text = normalize(detokenizer, fixed_text)

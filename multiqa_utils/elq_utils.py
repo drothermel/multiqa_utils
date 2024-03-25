@@ -596,13 +596,13 @@ def _get_and_save_predictions(
     """
 
     # save biencoder predictions and print precision/recalls
-    num_correct_weak = 0
-    num_correct_strong = 0
-    num_predicted = 0
-    num_gold = 0
-    num_correct_weak_from_input_window = 0
-    num_correct_strong_from_input_window = 0
-    num_gold_from_input_window = 0
+    # num_correct_weak = 0
+    # num_correct_strong = 0
+    # num_predicted = 0
+    # num_gold = 0
+    # num_correct_weak_from_input_window = 0
+    # num_correct_strong_from_input_window = 0
+    # num_gold_from_input_window = 0
     all_entity_preds = []
 
     save_biencoder_file = os.path.join(args.save_preds_dir, "biencoder_outs.jsonl")
@@ -656,7 +656,9 @@ def _get_and_save_predictions(
                     for i in range(content_s - start_offset, content_e - start_offset)
                 ]
                 # title_strs = [sample['title'][s:e] for s, e in title_tok_offsets]
-                # content_strs = [sample['content'][s:e] for s, e in content_tok_offsets]
+                # content_strs = [
+                #     sample['content'][s:e] for s, e in content_tok_offsets
+                # ]
 
             # (num_pred_mentions, cands_per_mention)
             scores = dists[i] if args.threshold_type == "joint" else cand_scores[i]
@@ -834,6 +836,7 @@ def run_elq(
     logging.info(">> Finished running biencoder")
 
     runtime = end_time - start_time
+    logging.info(f">> Runtime: {runtime}")
 
     assert (
         len(samples)
