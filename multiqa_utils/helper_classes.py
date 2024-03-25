@@ -1,4 +1,9 @@
-from utils.data_structs import DataStruct, ArrayDict, Int2IntsDict, Str2IntsDict
+from utils.data_structs import (
+    DataStruct,
+    ArrayDict,
+    Str2IntsDict,
+    smallest_np_int_type_for_range,
+)
 
 
 class PassageData(DataStruct):
@@ -51,7 +56,7 @@ class NormManager(DataStruct):
         assert self.building
         self.norm_names.append(norm_name)
         # sid2nsid
-        var_and_ds_name = get_norm_data_name(norm_name, 'sid2nsid')
+        var_and_ds_name = self.get_norm_data_name(norm_name, 'sid2nsid')
         sid2nsid = ArrayDict(
             data_dir=self.get_dir(),
             name=var_and_ds_name,
@@ -67,7 +72,7 @@ class NormManager(DataStruct):
         )
 
         # str2nsid
-        var_and_ds_name = get_norm_data_name(norm_name, 'str2nsid')
+        var_and_ds_name = self.get_norm_data_name(norm_name, 'str2nsid')
         str2nsid = Str2IntsDict(
             data_dir=self.get_dir(),
             name=var_and_ds_name,
@@ -79,7 +84,7 @@ class NormManager(DataStruct):
             str2nsid,
         )
         # nstr2nsid
-        var_and_ds_name = get_norm_data_name(norm_name, 'nstr2nsid')
+        var_and_ds_name = self.get_norm_data_name(norm_name, 'nstr2nsid')
         nstr2nsid = Str2IntsDict(
             data_dir=self.get_dir(),
             name=var_and_ds_name,
@@ -103,13 +108,13 @@ class NormManager(DataStruct):
             nsid_dtype,
         )
         next_nsid = 0
-        for st, nst in str2nstr.items():
+        for st, nstr in str2nstr_dict.items():
             sid = str2sid_arraydict.get_str2sid(st)
             # Get the associated nsid
-            if nst not in nstr2nsid:
+            if nstr not in nstr2nsid:
                 nstr2nsid.add_str_vals(nstr, vals=[next_nsid])
                 next_nsid += 1
-            nsid = nstr2nsid.get_str2int(nst)
+            nsid = nstr2nsid.get_str2int(nstr)
             # Build the other data structs
             sid2nsid.add_key_val(sid, nsid, allow_repeats=False)
             str2nsid.add_str_vals(st, vals=[nsid])
@@ -120,7 +125,7 @@ class NormManager(DataStruct):
         # First load sid2nsid and create all the nsid2sids
         nsid2sids_list = []
         for norm_name in norm_names_list:
-            var_name = get_norm_data_name(norm_name, 'sid2nsid')
+            var_name = self.get_norm_data_name(norm_name, 'sid2nsid')
             self.load_extra_data(var_name)
             var_data = getattr(self, var_name)
             var_data.build_data2id_from_id2data()
